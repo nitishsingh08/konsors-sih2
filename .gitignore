@@ -1,4 +1,47 @@
 .vercel
+
+# JavaScript / frontend dependencies and local build caches
 node_modules/
+.pnpm-store/
+.npm/
+.yarn/
+.yarn-cache/
+.vite/
+.cache/
+coverage/
+
+# Python / backend environments, caches, and test output
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+coverage.xml
+htmlcov/
+
+# Local configuration and runtime output
+.env
+.env.*
+!.env.example
+*.log
+logs/
+tmp/
+temp/
+
+# Generated backend data and model artifacts
+backend/data/raw/
+backend/data/processed/
+backend/data/cache/
+backend/artifacts/
+
+# OS/editor files
 .DS_Store
 Thumbs.db
+.idea/
+.vscode/

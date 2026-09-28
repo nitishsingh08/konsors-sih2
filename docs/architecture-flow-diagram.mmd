@@ -1,0 +1,42 @@
+%%{init: {"flowchart": {"wrappingWidth": 300, "nodeSpacing": 30, "rankSpacing": 40, "htmlLabels": false, "useMaxWidth": false}, "themeVariables": {"fontSize": "15px"}}}%%
+flowchart LR
+  subgraph A["1 · DATA"]
+    direction TB
+    A1["SOURCES<br/>FIRMS · HLS · SAR<br/>TROPOMI · ERA5<br/>WorldCover · DEM<br/>GEM / OSM"]
+    A2["INGEST<br/>clients · policies<br/>raw/ · object store"]
+    A3["DB — input<br/>events · facilities<br/>land cover · weather<br/>terrain · jobs · reviews"]
+    A1 --> A2 --> A3
+  end
+  subgraph B["2 · FEATURES + MODEL"]
+    direction TB
+    B1["141 FEATURES<br/>11 families · 8 builders<br/>fixed order · versioned<br/>percentile · missing"]
+    B2["LightGBM<br/>train offline<br/>infer online · SHAP"]
+    B3["DB — output<br/>feature_vectors<br/>model_predictions<br/>model_registry"]
+    B1 --> B2 --> B3
+  end
+  subgraph C["3 · SERVE + USE"]
+    direction TB
+    C1["FastAPI /api/v1<br/>v1 core · v2 analysis<br/>auth · traces"]
+    C2["React SPA<br/>map · 14-section analysis"]
+    C3["USE + LOOP<br/>analyst reviews<br/>→ labels → retrain"]
+    C1 --> C2 --> C3
+  end
+  A --> B --> C
+  classDef s fill:#DCEBFB,stroke:#3B7DD8,color:#0B2A4A
+  classDef d fill:#E7E9EC,stroke:#77808C,color:#232A31
+  classDef f fill:#FDF0D5,stroke:#C08A1E,color:#3D2A05
+  classDef m fill:#DDF0D8,stroke:#4C9A3C,color:#123A0E
+  classDef a fill:#E8DDF7,stroke:#7A4FC0,color:#2B1550
+  classDef u fill:#FADCE6,stroke:#C0417A,color:#4A0F27
+  classDef p fill:#FFF0D6,stroke:#B4741A,color:#3A2405
+  class A1,A2 s
+  class A3 d
+  class B1 f
+  class B2 m
+  class B3 d
+  class C1 a
+  class C2 u
+  class C3 p
+  style A fill:#FCFDFE,stroke:#9AA6B2
+  style B fill:#FCFDFE,stroke:#9AA6B2
+  style C fill:#FCFDFE,stroke:#9AA6B2

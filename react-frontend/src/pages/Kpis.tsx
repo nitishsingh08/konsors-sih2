@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { DAY, nf } from '../lib/time';
 import { clamp } from '../lib/core';
 import { PMAP } from '../data/places';
@@ -5,6 +6,7 @@ import type { Event } from '../lib/types';
 import { winEvents } from '../state/selectors';
 import { useFilters } from '../state/useFilters';
 import { Spark, TipButton } from '../components/ui/Primitives';
+import { Icon } from '../components/ui/Icon';
 
 interface KpiDef {
   label: string;
@@ -15,7 +17,17 @@ interface KpiDef {
   alarm?: boolean;
 }
 
-export function Kpis() {
+export function Kpis({
+  collapsed,
+  onToggle,
+}: {
+  collapsed?: boolean;
+  onToggle?: () => void;
+} = {}) {
+  const [internalCollapsed, setInternalCollapsed] = useState(false);
+  const isCollapsed = collapsed !== undefined ? collapsed : internalCollapsed;
+  const toggle = onToggle || (() => setInternalCollapsed((c) => !c));
+
   const [f] = useFilters();
   const cur = winEvents(f, 0);
   const prev = winEvents(f, 1);
@@ -80,28 +92,71 @@ export function Kpis() {
   ];
 
   return (
-    <div className="kpis">
-      {defs.map((d) => {
-        const diff = d.prev ? Math.round(((d.value - d.prev) / d.prev) * 100) : null;
-        const dt = diff == null ? (d.value ? 'new' : 'no change') : (diff > 0 ? '+' : '') + diff + '%';
-        const alarm = d.alarm && d.value > 0;
-        return (
-          <div className={'kpi' + (alarm ? ' alarm' : '')} key={d.label}>
-            <div className="l">
-              {d.label}
-              <TipButton text={d.tip} label={'About ' + d.label} />
+    <div className={'kpis-box' + (isCollapsed ? ' collapsed' : '')}>
+      <div className="kpis-header">
+        <div className="kpis-header-left">
+          <span className="kpis-tag">Summary metrics</span>
+          {isCollapsed && (
+            <div className="kpis-compact-stats">
+              <span className="kpis-stat-pill">
+                <b>{nf(a.det)}</b> detections
+              </span>
+              <span className="dot">·</span>
+              <span className="kpis-stat-pill">
+                <b>{nf(a.ev)}</b> events
+              </span>
+              <span className="dot">·</span>
+              <span className={'kpis-stat-pill' + (a.abn > 0 ? ' alarm' : '')}>
+                <b>{a.abn}</b> abnormal
+              </span>
+              <span className="dot">·</span>
+              <span className="kpis-stat-pill">
+                <b>{a.sites}</b> active sites
+              </span>
+              <span className="dot">·</span>
+              <span className="kpis-stat-pill">
+                <b>{a.rev}</b> needs review
+              </span>
             </div>
-            <div className="v num">{nf(d.value)}</div>
-            <div className="d">
-              <b className="num">{dt}</b>
-              <span>vs previous {f.win} d</span>
-            </div>
-            <div style={{ color: 'var(--dim)', marginTop: 4 }}>
-              <Spark values={d.series} w={120} h={24} color={alarm ? 'var(--danger)' : 'currentColor'} />
-            </div>
-          </div>
-        );
-      })}
+          )}
+        </div>
+        <button
+          type="button"
+          className="btn sm kpis-toggle-btn"
+          onClick={toggle}
+          aria-label={isCollapsed ? 'Expand metrics window' : 'Collapse metrics window'}
+          title={isCollapsed ? 'Expand metrics' : 'Collapse metrics'}
+        >
+          <Icon name={isCollapsed ? 'chevron-down' : 'chevron-up'} size={13} />
+          <span>{isCollapsed ? 'Expand' : 'Collapse'}</span>
+        </button>
+      </div>
+
+      {!isCollapsed && (
+        <div className="kpis">
+          {defs.map((d) => {
+            const diff = d.prev ? Math.round(((d.value - d.prev) / d.prev) * 100) : null;
+            const dt = diff == null ? (d.value ? 'new' : 'no change') : (diff > 0 ? '+' : '') + diff + '%';
+            const alarm = d.alarm && d.value > 0;
+            return (
+              <div className={'kpi' + (alarm ? ' alarm' : '')} key={d.label}>
+                <div className="l">
+                  {d.label}
+                  <TipButton text={d.tip} label={'About ' + d.label} />
+                </div>
+                <div className="v num">{nf(d.value)}</div>
+                <div className="d">
+                  <b className="num">{dt}</b>
+                  <span>vs previous {f.win} d</span>
+                </div>
+                <div style={{ color: 'var(--dim)', marginTop: 4 }}>
+                  <Spark values={d.series} w={120} h={24} color={alarm ? 'var(--danger)' : 'currentColor'} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

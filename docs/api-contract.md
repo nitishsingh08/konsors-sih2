@@ -5,9 +5,40 @@ This lists the JSON shapes the frontend needs. Everything here is currently prod
 with `fetch` calls returning these shapes, and the UI needs no other changes.
 
 Version 1's contract (places, events, site history, SHAP, land cover, imagery, weather
-summary) still applies — see the version 1 README if you kept it. This file only covers what
-version 2 adds: the 141-feature vector, the wind grid, the smoke plume, the fire-spread
-outlook, exposure counts, similar events, and analyst reviews.
+summary) still applies — see the version 1 README if you kept it. This file covers what
+version 2 adds: the 6-class taxonomy with baseline/workflow statuses, the 141-feature vector,
+the wind grid, the smoke plume, the fire-spread outlook, exposure counts, similar events, and analyst reviews.
+
+## 0. Event Entity & Taxonomy — `GET /api/events` and `GET /api/events/{id}`
+
+Each event object carries classification, baseline deviation, and analyst workflow status:
+
+```json
+{
+  "id": "E0218",
+  "place_id": "P0042",
+  "detected_at": "2026-09-20T14:15:00+05:30",
+  "lat": 15.1245,
+  "lon": 76.6214,
+  "frp_median": 99.4,
+  "predicted_class": "wildfire",
+  "confidence": 0.88,
+  "baseline_status": "abnormal",
+  "status": "unreviewed",
+  "missing_fraction": 0.08
+}
+```
+
+- **`predicted_class`**: One of the six standardized classes:
+  - `"wildfire"` (forest / natural vegetation fire)
+  - `"agricultural_burning"` (crop residue / stubble burning)
+  - `"gas_flare"` (petrochemical / refinery flare stack)
+  - `"industrial"` (steel mills, cement kilns, factory thermal sources)
+  - `"mining"` (coal fires, active mine workings)
+  - `"unknown"` (insufficient or conflicting signature)
+- **`confidence`**: `0.0` to `1.0`. Calibrated (via isotonic regression / Platt scaling) against our heuristic labeling rules to reduce raw softmax overconfidence — it reflects consistency with labeling rules, not verified ground-truth accuracy.
+- **`baseline_status`**: `"routine"` vs `"abnormal"`. Identifies site-level operational deviation (e.g. a routine permitted flare at a known refinery is `"routine"`, whereas an unexpected fire or flare excursion is `"abnormal"`).
+- **`status`**: Analyst triage workflow state (`"unreviewed"`, `"confirmed"`, `"false_alarm"`). Separate from `baseline_status`.
 
 ## 1. Feature vector — `GET /api/events/{id}/features`
 

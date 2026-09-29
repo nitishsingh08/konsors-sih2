@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="AGNI-NETRA">
+  <title>AGNI-NETRA</title>
+  <!--
+    AGNI-NETRA mark.
+    An aperture ring (the "netra": the eye that watches) broken at the base,
+    holding a two-tongued flame (the "agni": the heat being watched).
+    Geometry is on a 64-unit grid; the ring is r=25, 44 degree gap, 3.8 stroke.
+  -->
+  <defs>
+    <linearGradient id="agni-flame" x1="32" y1="17.2" x2="32" y2="48.2" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#E5484D"/>
+      <stop offset=".55" stop-color="#F97316"/>
+      <stop offset="1" stop-color="#FBBF24"/>
+    </linearGradient>
+    <linearGradient id="agni-ring" x1="9" y1="7" x2="55" y2="57" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7FB2DC"/>
+      <stop offset="1" stop-color="#22405F"/>
+    </linearGradient>
+  </defs>
+  <path d="M22.63 55.18A25 25 0 1 1 41.37 55.18" fill="none" stroke="url(#agni-ring)" stroke-width="3.8" stroke-linecap="round"/>
+  <path d="M31 17.2C34.9 23.9 43 28.4 43 36.3C43 42.9 37.9 48.2 32 48.2C26.1 48.2 21 42.9 21 36.3C21 31.6 23.1 28.1 25.9 24.6C27.6 27.1 28.8 28.4 29.5 26.9C30.3 25.1 30.7 19.6 31 17.2Z" fill="url(#agni-flame)"/>
+</svg>

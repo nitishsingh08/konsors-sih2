@@ -39,21 +39,24 @@ Production-ready backend API supporting the **AGNI-NETRA v2** dashboard.
 
 ## 2. Connecting to PostgreSQL with PostGIS & pgvector
 
-For production or cloud deployment (e.g. Supabase, Neon, AWS RDS):
+For production or cloud deployment (e.g. Supabase, Neon, AWS RDS, Local):
 1. Copy `.env.example` to `.env`:
    ```bash
    cp .env.example .env
    ```
 2. Set your `DATABASE_URL` in `.env`:
    ```env
-   DATABASE_URL="postgresql://user:password@your-supabase-db.supabase.co:5432/postgres"
+   DATABASE_URL="postgresql+psycopg2://postgres:YOUR_PASSWORD@localhost:5432/SIH"
    ```
 3. Enable PostGIS and vector extensions on your database:
    ```sql
    CREATE EXTENSION IF NOT EXISTS postgis;
    CREATE EXTENSION IF NOT EXISTS vector;
    ```
-4. Restart the server. Tables (`places`, `events`, `event_features`, `event_geometries`, `analyst_reviews`) will be created automatically.
+4. Seed initial places and events:
+   ```bash
+   python -m app.seed
+   ```
 
 ---
 

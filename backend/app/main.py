@@ -14,18 +14,18 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: Initialize tables and background scheduler
-    logger.info("Starting AGNI-NETRA backend service...")
+    logger.info("Starting SPARC backend service...")
     Base.metadata.create_all(bind=engine)
     start_scheduler()
     yield
     # Shutdown: Clean up background scheduler
-    logger.info("Shutting down AGNI-NETRA backend service...")
+    logger.info("Shutting down SPARC backend service...")
     stop_scheduler()
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
-    description="AGNI-NETRA v2 Geospatial Earth Observation & Thermal Source Monitoring API",
+    description="SPARC Geospatial Earth Observation & Thermal Source Monitoring API",
     lifespan=lifespan
 )
 
@@ -44,7 +44,7 @@ app.include_router(api_router, prefix=settings.API_V1_STR)
 @app.get("/")
 def root():
     return {
-        "service": "AGNI-NETRA API",
+        "service": "SPARC API",
         "version": settings.VERSION,
         "docs_url": "/docs",
         "status": "operational"

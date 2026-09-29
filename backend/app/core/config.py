@@ -3,7 +3,7 @@ from typing import List
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
-    PROJECT_NAME: str = "AGNI-NETRA API"
+    PROJECT_NAME: str = "SPARC API"
     VERSION: str = "2.0.0"
     API_V1_STR: str = "/api"
     DEBUG: bool = True

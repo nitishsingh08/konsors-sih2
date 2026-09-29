@@ -163,8 +163,8 @@ function TopBar() {
   return (
     <header className="top">
       <div className="brand">
-        <b>AGNI-NETRA</b>
-        <span>अग्नि-नेत्र</span>
+        <b>SPARC</b>
+        <span>Thermal source monitoring</span>
       </div>
       <SearchBox inputRef={inputRef} />
       <span className="sp" />

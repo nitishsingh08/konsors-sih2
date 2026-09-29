@@ -39,7 +39,7 @@ def create_walkthrough_document():
     # Title
     p_title = doc.add_paragraph()
     p_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run_title = p_title.add_run("AGNI-NETRA")
+    run_title = p_title.add_run("SPARC")
     run_title.font.name = "Arial"
     run_title.font.size = Pt(26)
     run_title.font.bold = True
@@ -61,7 +61,7 @@ def create_walkthrough_document():
         "Satellite thermal monitoring across India faces a major operational dilemma: at 375-meter resolution, "
         "a raw thermal anomaly looks virtually identical whether it is a wildfire in an Uttarakhand forest, "
         "crop stubble burning in Punjab, a continuous petrochemical flare in Jamnagar, or an underground coal fire in Jharia. "
-        "Standard backends fail because they treat satellite hotspots as simple isolated points. AGNI-NETRA's backend was "
+        "Standard backends fail because they treat satellite hotspots as simple isolated points. SPARC's backend was "
         "specifically architected to resolve this through four fundamental design tenets:"
     )
     p1.style.font.name = "Calibri"
@@ -208,7 +208,7 @@ def create_walkthrough_document():
         rb.font.color.rgb = navy
         p.add_run(desc)
 
-    output_path = r"c:\Users\NITISH SINGH\Downloads\agni-netra-v2\agni-netra-v2\AGNI-NETRA_Backend_Complete_Design_Walkthrough.docx"
+    output_path = r"c:\Users\NITISH SINGH\Downloads\agni-netra-v2\agni-netra-v2\SPARC_Backend_Complete_Design_Walkthrough.docx"
     doc.save(output_path)
     print(f"Document successfully created at: {output_path}")
 

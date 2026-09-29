@@ -374,7 +374,7 @@ function readHash() {
 }
 function shell() {
   $('#app').innerHTML = `<nav class="rail" aria-label="Main"><div class="logo" aria-hidden="true">${LOGO}</div>${NAV.map(n => `<button class="nv" data-act="nav" data-p="${n[0]}" aria-current="${S.page === n[0] ? 'page' : 'false'}">${icon(n[2], 21)}<span>${n[1]}</span></button>`).join('')}<div class="sp"></div></nav>
-  <div class="main"><header class="top"><div class="brand"><b>AGNI-NETRA</b><span>अग्नि-नेत्र</span></div>
+  <div class="main"><header class="top"><div class="brand"><b>SPARC</b><span>Thermal source monitoring</span></div>
   <div class="search"><span class="ic">${icon('search', 16)}</span><input id="q" type="search" autocomplete="off" placeholder="Search a place, district or site code" aria-label="Search places" role="combobox" aria-expanded="false" aria-controls="sugg"><kbd>/</kbd><div class="sugg" id="sugg" hidden></div></div>
   <span class="sp"></span><span class="pill" data-tip="Sample value. The live pipeline shows the age of the newest FIRMS data here."><i></i>FIRMS data 2 h 41 min old</span><span class="sample" data-tip="Every place, event and number in this build is generated sample data.">Sample data</span>
   <button class="btn ic" data-act="theme" aria-label="Switch theme">${icon(S.theme === 'dark' ? 'sun' : 'moon', 17)}</button></header><main id="view"></main></div>`;

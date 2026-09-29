@@ -7,7 +7,8 @@ import type { JSX, ReactNode } from 'react';
 export type IconName =
   | 'map' | 'bars' | 'star' | 'gauge' | 'book' | 'send' | 'search' | 'sun' | 'moon'
   | 'layers' | 'draw' | 'plus' | 'minus' | 'play' | 'pause' | 'x' | 'expand' | 'shrink'
-  | 'download' | 'copy' | 'back' | 'reset' | 'check';
+  | 'download' | 'copy' | 'back' | 'reset' | 'check'
+  | 'chevron-up' | 'chevron-down' | 'chevron-left' | 'chevron-right';
 
 const PATHS: Record<IconName, JSX.Element> = {
   map: (
@@ -82,6 +83,10 @@ const PATHS: Record<IconName, JSX.Element> = {
     </>
   ),
   check: <path d="M5 12.5l4.5 4.5L19 7.5" />,
+  'chevron-up': <path d="M18 15l-6-6-6 6" />,
+  'chevron-down': <path d="M6 9l6 6 6-6" />,
+  'chevron-left': <path d="M15 19l-6-6 6-6" />,
+  'chevron-right': <path d="M9 5l6 6-6 6" />,
 };
 
 export function Icon({

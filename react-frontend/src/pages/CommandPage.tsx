@@ -175,7 +175,20 @@ export function CommandPage({ sel }: { sel: string | null }) {
     if (sel) go('map');
   }, [sel, go]);
 
-  /* keyboard: j/k walk the queue, l toggles layers, escape backs out */
+  const [kpisCollapsed, setKpisCollapsed] = useState(false);
+  const [sideCollapsed, setSideCollapsed] = useState(false);
+
+  const toggleKpis = useCallback(() => {
+    setKpisCollapsed((c) => !c);
+    setTimeout(() => mapRef.current?.invalidateSize(), 60);
+  }, []);
+
+  const toggleSide = useCallback(() => {
+    setSideCollapsed((c) => !c);
+    setTimeout(() => mapRef.current?.invalidateSize(), 60);
+  }, []);
+
+  /* keyboard: j/k walk the queue, l toggles layers, q toggles side panel, escape backs out */
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const el = document.activeElement;
@@ -190,6 +203,10 @@ export function CommandPage({ sel }: { sel: string | null }) {
         return;
       }
       if (advTab) return;
+      if (e.key === 'q') {
+        toggleSide();
+        return;
+      }
       if (e.key === 'j' || e.key === 'k') {
         const l = cur.queue;
         if (!l.length) return;
@@ -201,18 +218,18 @@ export function CommandPage({ sel }: { sel: string | null }) {
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [cur.queue, sel, area, drawing, advTab, clearSel, onSelect]);
+  }, [cur.queue, sel, area, drawing, advTab, clearSel, onSelect, toggleSide]);
 
   const place = sel ? PMAP[sel] : null;
   const ev = place ? pickEvent(place, filters, evId) : null;
   const abn = cur.queue.filter((g) => sev(g.top) === 3).length;
-  const csvName = place ? `agni-netra-${place.code === 'T' ? place.id : place.code}-events.csv` : '';
+  const csvName = place ? `sparc-${place.code === 'T' ? place.id : place.code}-events.csv` : '';
 
   return (
-    <div className={'cmd' + (expanded && (sel || area) ? ' expanded' : '')}>
+    <div className={'cmd' + (expanded && (sel || area) ? ' expanded' : '') + (sideCollapsed ? ' side-collapsed' : '')}>
       <div className="mapcol">
         <Filters />
-        <Kpis />
+        <Kpis collapsed={kpisCollapsed} onToggle={toggleKpis} />
         <div className="mapbox" id="mapbox">
           <CommandMap
             ref={mapRef}
@@ -229,6 +246,18 @@ export function CommandPage({ sel }: { sel: string | null }) {
             onArea={onArea}
             onBaseFallback={onBaseFallback}
           />
+          {sideCollapsed && (
+            <button
+              className="side-dock-toggle"
+              aria-label="Expand Priority Queue and incidents panel"
+              title="Expand Priority Queue (or press Q)"
+              onClick={toggleSide}
+            >
+              <Icon name="chevron-left" size={15} />
+              <span>Priority Queue</span>
+              <span className="badge">{cur.queue.length}</span>
+            </button>
+          )}
           <MapOverlays
             layers={layers}
             onLayer={(k) => setLayers((l) => ({ ...l, [k]: !l[k] }))}
@@ -272,6 +301,14 @@ export function CommandPage({ sel }: { sel: string | null }) {
               >
                 <Icon name={expanded ? 'shrink' : 'expand'} size={15} />
               </button>
+              <button
+                className="btn ic sm"
+                title="Collapse panel"
+                aria-label="Collapse panel"
+                onClick={toggleSide}
+              >
+                <Icon name="chevron-right" size={15} />
+              </button>
             </>
           ) : place && ev ? (
             <>
@@ -304,6 +341,14 @@ export function CommandPage({ sel }: { sel: string | null }) {
               <button className="btn ic sm" aria-label="Close report" onClick={clearSel}>
                 <Icon name="x" size={15} />
               </button>
+              <button
+                className="btn ic sm"
+                title="Collapse panel"
+                aria-label="Collapse panel"
+                onClick={toggleSide}
+              >
+                <Icon name="chevron-right" size={15} />
+              </button>
             </>
           ) : (
             <>
@@ -311,6 +356,15 @@ export function CommandPage({ sel }: { sel: string | null }) {
               <span className="dim small">
                 {cur.queue.length} places{abn ? `, ${abn} abnormal` : ''}
               </span>
+              <span style={{ flex: 1 }} />
+              <button
+                className="btn ic sm"
+                title="Collapse Priority Queue"
+                aria-label="Collapse Priority Queue"
+                onClick={toggleSide}
+              >
+                <Icon name="chevron-right" size={15} />
+              </button>
             </>
           )}
         </div>

@@ -40,7 +40,7 @@ def create_document():
     # Document Title
     p_title = doc.add_paragraph()
     p_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run_title = p_title.add_run("AGNI-NETRA")
+    run_title = p_title.add_run("SPARC")
     run_title.font.name = "Arial"
     run_title.font.size = Pt(26)
     run_title.font.bold = True
@@ -59,7 +59,7 @@ def create_document():
     h1 = doc.add_heading("1. Executive Summary", level=1)
     h1.style.font.color.rgb = navy
     p = doc.add_paragraph(
-        "AGNI-NETRA is an advanced geospatial thermal anomaly monitoring and early-warning intelligence platform. "
+        "SPARC is an advanced geospatial thermal anomaly monitoring and early-warning intelligence platform. "
         "It integrates near real-time (NRT) satellite thermal observations (NASA FIRMS / VIIRS 375m) with 141 multimodal "
         "Earth Observation (EO) features spanning terrain, meteorology, land cover, industrial facility proximity, "
         "and atmospheric chemistry. This document details the complete production database schema, technology stack, "
@@ -197,7 +197,7 @@ def create_document():
     h4.style.font.color.rgb = navy
 
     points = [
-        ("Separation of Physical vs Workflow Status: ", "Unlike standard systems that conflate operational normalcy with review state, AGNI-NETRA separates baseline_status (routine vs abnormal) from status (unreviewed, confirmed, false_alarm). A flare at a refinery can be completely routine physically, while remaining unreviewed operationally."),
+        ("Separation of Physical vs Workflow Status: ", "Unlike standard systems that conflate operational normalcy with review state, SPARC separates baseline_status (routine vs abnormal) from status (unreviewed, confirmed, false_alarm). A flare at a refinery can be completely routine physically, while remaining unreviewed operationally."),
         ("Deterministic Heuristic Rule-Based Labeling: ", "In the absence of nationwide clean training labels, labels are generated via transparent spatial proximity, seasonal windows, and land cover heuristics (e.g. Cropland + Oct-Nov harvest + high spread speed = agricultural_burning). This is completely defensible to evaluators."),
         ("Precomputed TreeSHAP (<5ms API Latency): ", "Computing SHAP attribution on the fly consumes substantial CPU cycles per request. Precomputing SHAP at event ingestion and caching it in shap_json delivers instantaneous O(1) response times during live presentations."),
         ("Schema Versioning with Deferred Indexing: ", "The feature_schema_version column protects pgvector embeddings from silent drift when formulas change. Heavy IVFFlat and GIN indexes are deferred for demo-scale data, guaranteeing 100% recall with exact brute-force search in under 2 milliseconds.")
@@ -215,7 +215,7 @@ def create_document():
         r_text.font.name = "Calibri"
         r_text.font.size = Pt(10.5)
 
-    output_path = r"c:\Users\NITISH SINGH\Downloads\agni-netra-v2\agni-netra-v2\AGNI-NETRA_Database_and_System_Design.docx"
+    output_path = r"c:\Users\NITISH SINGH\Downloads\agni-netra-v2\agni-netra-v2\SPARC_Database_and_System_Design.docx"
     doc.save(output_path)
     print(f"Document successfully created at: {output_path}")
 

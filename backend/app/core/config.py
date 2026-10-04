@@ -27,6 +27,12 @@ class Settings(BaseSettings):
     # Feature catalog versioning
     FEATURE_SCHEMA_VERSION: int = 1
 
+    # Trained model artefacts written by colab_p7_train.py (qc/models/).
+    # Empty disables model serving and the endpoints report the reason rather
+    # than falling back to a fabricated score.
+    MODEL_DIR: str = os.getenv("MODEL_DIR", "qc/models")
+    SERVING_MODEL_DEFAULT: str = os.getenv("SERVING_MODEL_DEFAULT", "B")
+
     class Config:
         case_sensitive = True
         env_file = ".env"

@@ -1,0 +1,264 @@
+{
+  "n_features": 141,
+  "status_vocabulary": [
+    "COMPUTED_HISTORICAL",
+    "UNVERIFIED_HISTORICAL",
+    "HISTORICAL_NAN",
+    "MISSING_IMPLEMENTATION",
+    "MISSING_INPUT",
+    "EXTRACTION_ERROR",
+    "RETIRED",
+    "NEW_IMPLEMENTATION"
+  ],
+  "counts_by_status": {
+    "COMPUTED_HISTORICAL": 12,
+    "HISTORICAL_NAN": 7,
+    "MISSING_IMPLEMENTATION": 44,
+    "NEW_IMPLEMENTATION": 68,
+    "UNVERIFIED_HISTORICAL": 10
+  },
+  "counts_by_group": {
+    "THERMAL": {
+      "NEW_IMPLEMENTATION": 15
+    },
+    "TEMPORAL": {
+      "MISSING_IMPLEMENTATION": 4,
+      "NEW_IMPLEMENTATION": 10
+    },
+    "SPREAD": {
+      "NEW_IMPLEMENTATION": 17
+    },
+    "TERRAIN": {
+      "COMPUTED_HISTORICAL": 12
+    },
+    "LANDCOVER_FUEL": {
+      "MISSING_IMPLEMENTATION": 16
+    },
+    "INDUSTRIAL": {
+      "NEW_IMPLEMENTATION": 18
+    },
+    "WEATHER_FIRE_DANGER": {
+      "HISTORICAL_NAN": 7,
+      "MISSING_IMPLEMENTATION": 1,
+      "UNVERIFIED_HISTORICAL": 10
+    },
+    "OPTICAL_SMOKE": {
+      "MISSING_IMPLEMENTATION": 7
+    },
+    "SAR_STRUCTURAL": {
+      "MISSING_IMPLEMENTATION": 7
+    },
+    "ATMOSPHERIC_CHEMISTRY": {
+      "MISSING_IMPLEMENTATION": 9
+    },
+    "QUALITY_UNCERTAINTY": {
+      "NEW_IMPLEMENTATION": 8
+    }
+  },
+  "expected_group_sizes": {
+    "THERMAL": 15,
+    "TEMPORAL": 14,
+    "SPREAD": 17,
+    "TERRAIN": 12,
+    "LANDCOVER_FUEL": 16,
+    "INDUSTRIAL": 18,
+    "WEATHER_FIRE_DANGER": 18,
+    "OPTICAL_SMOKE": 7,
+    "SAR_STRUCTURAL": 7,
+    "ATMOSPHERIC_CHEMISTRY": 9,
+    "QUALITY_UNCERTAINTY": 8
+  },
+  "label_derived_features": [
+    "DIST_NEAREST_FACILITY_LOG",
+    "DIST_REFINERY_LOG",
+    "DIST_POWERPLANT_LOG",
+    "DIST_PETROCHEMICAL_LOG",
+    "DIST_STEEL_LOG",
+    "DIST_CEMENT_LOG",
+    "DIST_LNG_LOG",
+    "DIST_MINE_LOG",
+    "DIST_LANDFILL_LOG",
+    "DIST_PIPELINE_LOG",
+    "DIST_WELLPAD_LOG",
+    "FACILITY_COUNT_1KM",
+    "FACILITY_COUNT_5KM",
+    "FACILITY_COUNT_10KM",
+    "INDUSTRIAL_DENSITY_CONTRAST",
+    "INSIDE_FACILITY",
+    "DIST_FACILITY_BOUNDARY_LOG",
+    "KNOWN_FLARE"
+  ],
+  "n_label_derived": 18,
+  "n_non_leak": 123,
+  "features_by_phase": {
+    "": [
+      "ELEVATION_MEDIAN",
+      "ELEVATION_IQR",
+      "ELEVATION_RANGE",
+      "RELATIVE_ELEVATION",
+      "SLOPE_MEDIAN",
+      "SLOPE_P90",
+      "ASPECT_SIN",
+      "ASPECT_COS",
+      "TPI",
+      "TRI",
+      "CURVATURE",
+      "RIDGE_VALLEY_POSITION"
+    ],
+    "P2": [
+      "FRP_MEDIAN",
+      "FRP_P90",
+      "FRP_MAX",
+      "FRP_SUM_LOG",
+      "FRP_IQR",
+      "FRP_CV",
+      "FRP_PEAK_MEDIAN_RATIO",
+      "FRP_SLOPE",
+      "FRP_DECAY_RATE",
+      "BT_I4_MEDIAN",
+      "BT_I5_MEDIAN",
+      "BT_I4_I5_DIFF_MEDIAN",
+      "BT_I4_I5_DIFF_P90",
+      "SUBPIXEL_TEMP_MEDIAN",
+      "SOURCE_AREA_MEDIAN",
+      "DURATION_HOURS_LOG",
+      "DETECTION_COUNT_LOG",
+      "OVERPASS_DETECTION_RATIO",
+      "DETECTION_DENSITY",
+      "FRP_AUTOCORRELATION",
+      "TIME_TO_PEAK",
+      "FRP_PERSISTENCE",
+      "NIGHT_DAY_FRP_RATIO",
+      "PEAK_HOUR_SIN",
+      "PEAK_HOUR_COS",
+      "CENTROID_DISPLACEMENT_MEDIAN",
+      "CENTROID_DISPLACEMENT_P90",
+      "SPREAD_SPEED_MEDIAN",
+      "SPREAD_SPEED_P90",
+      "SPREAD_SPEED_MAX",
+      "CENTROID_JITTER",
+      "STATIONARITY_INDEX",
+      "SPREAD_DIRECTION_SIN",
+      "SPREAD_DIRECTION_COS",
+      "DIRECTION_CONSISTENCY",
+      "AREA_GROWTH_RATE",
+      "PERIMETER_GROWTH_RATE",
+      "ELONGATION",
+      "COMPACTNESS",
+      "SOLIDITY",
+      "NEW_PIXEL_FRACTION",
+      "SPREAD_WIND_SPEED_RATIO",
+      "DIST_NEAREST_FACILITY_LOG",
+      "DIST_REFINERY_LOG",
+      "DIST_POWERPLANT_LOG",
+      "DIST_PETROCHEMICAL_LOG",
+      "DIST_STEEL_LOG",
+      "DIST_CEMENT_LOG",
+      "DIST_LNG_LOG",
+      "DIST_MINE_LOG",
+      "DIST_LANDFILL_LOG",
+      "DIST_PIPELINE_LOG",
+      "DIST_WELLPAD_LOG",
+      "FACILITY_COUNT_1KM",
+      "FACILITY_COUNT_5KM",
+      "FACILITY_COUNT_10KM",
+      "INDUSTRIAL_DENSITY_CONTRAST",
+      "INSIDE_FACILITY",
+      "DIST_FACILITY_BOUNDARY_LOG",
+      "KNOWN_FLARE",
+      "TEMPERATURE_ANOMALY_Z",
+      "RH_ANOMALY_Z",
+      "VPD_ANOMALY_Z",
+      "WIND_SPEED",
+      "WIND_GUST",
+      "WIND_DIRECTION_SIN",
+      "WIND_DIRECTION_COS",
+      "RAIN_24H_LOG",
+      "RAIN_7D_LOG",
+      "SOIL_MOISTURE_ANOMALY_Z",
+      "FIRMS_CONFIDENCE",
+      "PIXEL_SIZE",
+      "SCAN_ANGLE_SIN",
+      "SCAN_ANGLE_COS",
+      "VIEW_ZENITH_SIN",
+      "VIEW_ZENITH_COS",
+      "CLOUD_FRACTION",
+      "MISSING_FEATURE_FRACTION"
+    ],
+    "P3c_landcover": [
+      "FOREST_FRAC_375M",
+      "FOREST_FRAC_1KM",
+      "FOREST_FRAC_10KM",
+      "FOREST_LOCAL_REGIONAL_CONTRAST",
+      "CROPLAND_FRAC_1KM",
+      "CROPLAND_FRAC_10KM",
+      "CROPLAND_LOCAL_REGIONAL_CONTRAST",
+      "BUILTUP_FRAC_1KM",
+      "BUILTUP_FRAC_10KM",
+      "BARE_MINING_FRAC_1KM",
+      "WATER_FRAC_1KM",
+      "LANDCOVER_ENTROPY",
+      "NDVI_MEDIAN",
+      "NDVI_ANOMALY_Z",
+      "NBR_CHANGE",
+      "NDMI_ANOMALY_Z"
+    ],
+    "P3d_fwi": [
+      "FFMC",
+      "DMC",
+      "DC",
+      "ISI",
+      "BUI",
+      "FWI",
+      "FWI_ANOMALY_Z"
+    ],
+    "P3e_sar": [
+      "VV_CHANGE",
+      "VH_CHANGE",
+      "VV_VH_CHANGE",
+      "COHERENCE_LOSS",
+      "DNBR",
+      "DNDVI",
+      "STRUCTURAL_CHANGE_PROBABILITY"
+    ],
+    "P3f_smoke_atmospheric": [
+      "LIGHTNING_COUNT_24H",
+      "SMOKE_PROBABILITY",
+      "SMOKE_LENGTH_LOG",
+      "SMOKE_DIRECTION_SIN",
+      "SMOKE_DIRECTION_COS",
+      "DARK_SMOKE_PROBABILITY",
+      "LIGHT_SMOKE_PROBABILITY",
+      "BURN_SCAR_GROWTH_RATE",
+      "NO2_ANOMALY_Z",
+      "SO2_ANOMALY_Z",
+      "CO_ANOMALY_Z",
+      "CH4_ANOMALY_Z",
+      "HCHO_ANOMALY_Z",
+      "AOD_ANOMALY_Z",
+      "CO_NO2_RATIO_LOG",
+      "SO2_NO2_RATIO_LOG",
+      "CH4_CO_RATIO_LOG"
+    ],
+    "P3g_recurrence": [
+      "RECURRENCE_RATE_1Y",
+      "RECURRENCE_RATE_3Y",
+      "RECURRENCE_RATE_5Y",
+      "MAX_INTER_EVENT_GAP_LOG"
+    ]
+  },
+  "phase_titles": {
+    "P0_recover_cell262": "P0 - Recover historical cell 262 (extract_fire_features)",
+    "P2": "P2 - Verify with the 10-event forensic test",
+    "P3a_industrial": "P3a - Industrial context (18) + event shape/geometry (6)",
+    "P3b_quality": "P3b - Quality / uncertainty (8 features, from India_Firms)",
+    "P3c_landcover": "P3c - Land cover / fuel (16 features)",
+    "P3d_fwi": "P3d - Canadian Fire Weather Index (7 features)",
+    "P3e_sar": "P3e - SAR / structural (7 features)",
+    "P3f_smoke_atmospheric": "P3f - Smoke, atmospheric, lightning (16 features)",
+    "P3g_recurrence": "P3g - Recurrence / inter-event gap (4 features)",
+    "": "No further work required"
+  },
+  "open_phase_count": 6,
+  "runtime_verified_count": 0
+}

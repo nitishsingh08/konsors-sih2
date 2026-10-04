@@ -3,13 +3,53 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from datetime import datetime
 
+from app.core.config import settings
 from app.core.database import get_db
 from app.models import models
 from app.schemas import schemas
 from app.services.weather_cache import get_cached_wind_grid, get_cached_weather_forecast
 from app.services.ml_engine import precompute_shap_explanations
+from app.services.model_registry import (
+    ModelContractError,
+    ModelNotAvailable,
+    get_registry,
+    health as model_health,
+)
 
 router = APIRouter()
+
+# --- Model serving (real predictions from the P7 artefacts) ---
+# Unlike the rest of this API, which returns hardcoded sample values, these
+# load the fitted booster. Absent features are passed as NaN and echoed back in
+# `missing_features`; they are never coerced to zero.
+@router.post("/predict", response_model=schemas.PredictResponse)
+def predict(request: schemas.PredictRequest):
+    name = request.model or settings.SERVING_MODEL_DEFAULT
+    try:
+        result = get_registry().predict(name, request.features)
+    except ModelNotAvailable as exc:
+        # 503, not a fabricated score: a missing model must not look like a
+        # confident prediction.
+        raise HTTPException(status_code=503, detail=str(exc))
+    except ModelContractError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return schemas.PredictResponse(**result)
+
+
+@router.get("/models", response_model=schemas.ModelsStatus)
+def models_status():
+    return schemas.ModelsStatus(**model_health())
+
+
+@router.get("/models/{name}", response_model=schemas.ModelCard)
+def model_card(name: str):
+    try:
+        return schemas.ModelCard(**get_registry().describe(name))
+    except ModelNotAvailable as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ModelContractError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
 
 # --- 0. Events List & Detail ---
 @router.get("/events", response_model=List[schemas.EventResponse])

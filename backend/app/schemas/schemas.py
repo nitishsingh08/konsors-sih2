@@ -144,3 +144,59 @@ class ReviewResponse(ReviewCreate):
     created_at: datetime
     class Config:
         from_attributes = True
+
+
+# --- Real model serving (P7 artefacts) ---
+class PredictRequest(BaseModel):
+    """Features for one event.
+
+    Every key is optional: anything omitted is recorded as missing and becomes
+    NaN, which is how "could not measure" is encoded throughout the pipeline. A
+    missing feature is never coerced to zero.
+    """
+    features: Dict[str, Optional[float]] = Field(
+        default_factory=dict,
+        description="Feature name -> value. Omit anything unmeasured.",
+    )
+    model: str = Field(
+        default="B",
+        description="B (default, no leakage) or A (operational, weak labels)",
+    )
+
+class PredictResponse(BaseModel):
+    model: str
+    target: str
+    probability: float = Field(..., ge=0.0, le=1.0)
+    confidence: float = Field(..., ge=0.0, le=1.0)
+    above_review_threshold: bool
+    requires_human_review: bool
+    review_confidence: float
+    n_features_expected: int
+    n_features_supplied: int
+    missing_features: List[str]
+    missing_fraction: float = Field(..., ge=0.0, le=1.0)
+    best_iteration: int
+
+class ModelCard(BaseModel):
+    """What the model is, and -- more importantly -- what it is not."""
+    name: str
+    target: str
+    label_column: str
+    n_features: int
+    features: List[str]
+    best_iteration: int
+    review_confidence: float
+    trained_on: Optional[str] = None
+    n_train: Optional[int] = None
+    n_test: Optional[int] = None
+    caveats: List[str] = Field(
+        default_factory=list,
+        description="Reasons this model's score must not be quoted as a result.",
+    )
+
+class ModelsStatus(BaseModel):
+    model_dir: str
+    models_found: List[str]
+    loaded: List[str]
+    serving_default: str
+    note: str

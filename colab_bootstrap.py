@@ -38,10 +38,59 @@ REQUIRED = {
     "feature_gap": None,
     "rule_calibration": None,
     "colab_utils": None,
+    # Added 2026-10-04. These were missing, which is why a PARTIAL upload went
+    # unnoticed: the cell reported success while `threshold_calibration`,
+    # `gold_set` and `gee_utils` were never installed, and the failure only
+    # appeared much later as an unrelated-looking error. The list must cover
+    # every module the later cells import -- adding a module without adding it
+    # here reintroduces exactly this hole.
+    "threshold_calibration": None,
+    "gold_set": None,
+    "gee_utils": None,
+    "quality_features": None,
+    "explainability": None,
+    "colab_runcell": None,
+    # Added 2026-10-04 with P8/P8b: the figure set and the leakage probe. Same
+    # hole, same rule -- if these are absent the cell runs and then fails on an
+    # ImportError that looks like a code bug rather than a missing upload.
+    "figures": None,
+    "p8_report": None,
+    "leakage_probe": None,
 }
 
+#: Minimum acceptable version per CELL, checked against the uploaded bytes.
+#:
+#: Modules are verified by `hasattr`, which catches a stale copy. Cells have no
+#: such handle: a cell is a script, so an OLD cell still runs, still imports
+#: fine, and still fails in a way that looks like a live bug. That is exactly
+#: what happened on 2026-10-04 -- a 14,229-byte copy of `colab_p7e_gee_probe`
+#: was uploaded against a 21,060-byte repo file, and the failure
+#: (`Asset 'ESA/WorldCover/v200' is not an Image`) was reported as a dataset
+#: problem when it was a file-transfer problem.
+#:
+#: Bump these when the corresponding cell changes. A cell with NO version
+#: marker at all is always rejected: an unversioned cell cannot be checked, and
+#: an uncheckable cell is exactly what caused this.
+CELL_VERSION_FLOORS = {
+    # No cell is exempt. An unversioned cell cannot be verified, which is
+    # precisely what made the 14,229-byte upload undetectable.
+    "colab_p7b_diagnose": "2026-10-04.1",
+    "colab_p7c_goldset": "2026-10-04.1",
+    "colab_p7d_probe": "2026-10-04.1",
+    "colab_p7e0_reauth": "2026-10-04.1",
+    "colab_p7e_gee_probe": "2026-10-04.4",
+    "colab_p7f_landcover_direct": "2026-10-04.1",
+    "colab_p7g_landcover_vs_label": "2026-10-04.3",
+    "colab_p8_figures": "2026-10-04.1",
+    "colab_p8b_leakage": "2026-10-04.1",
+}
+
+#: Printed on every successful bootstrap, so a stale copy in Colab announces
+#: itself on the first line instead of being inferred from a later failure.
+BOOTSTRAP_VERSION = "2026-10-05.2"
+
 print("=" * 70)
-print("BOOTSTRAP")
+print(f"BOOTSTRAP  [v{BOOTSTRAP_VERSION}]")
 print("=" * 70)
 
 # ---------------------------------------------------------------------------
@@ -153,6 +202,13 @@ import industrial_features as ind
 import lineage_features as lf
 import training_design as td
 import weak_labels as weak
+import threshold_calibration as tcal
+import gold_set as gs
+import gee_utils as gee
+import quality_features as qf
+import explainability as expl
+import leakage_probe as leak
+import figures as figs
 
 
 def version_parts(v):
@@ -210,6 +266,48 @@ if not hasattr(db, "SITE_DEG") or not hasattr(fgap, "gap_report"):
 if not hasattr(rcal, "calibrate_to_target_counts"):
     problems.append("rule_calibration is stale")
 
+# --- the 2026-10-04 modules -------------------------------------------------
+# Each of these was added after the original REQUIRED list was written, and
+# their absence is exactly what let a partial upload pass unnoticed. Check the
+# SPECIFIC attribute a later cell depends on, not merely that the import
+# worked: an old copy imports fine and then fails somewhere else entirely.
+if not hasattr(tcal, "calibrate_operating_threshold"):
+    problems.append("threshold_calibration is stale -- no calibrate_operating_threshold")
+if not hasattr(tcal, "effective_threshold"):
+    problems.append("threshold_calibration is stale -- no effective_threshold")
+if not hasattr(rcal, "scale_targets"):
+    problems.append("rule_calibration is stale -- no scale_targets "
+                    "(catalogue targets will not be scaled onto the "
+                    "calibration frame and every threshold pins to the floor)")
+if not hasattr(rcal, "DEFAULT_POPULATION_SIZE"):
+    problems.append("rule_calibration is stale -- no DEFAULT_POPULATION_SIZE")
+if not hasattr(gs, "build_sample") or not hasattr(gs, "score_against_gold"):
+    problems.append("gold_set is stale -- no build_sample / score_against_gold")
+if not hasattr(gs, "GOLD_CLASSES"):
+    problems.append("gold_set is stale -- no GOLD_CLASSES")
+if not hasattr(gee, "authenticate") or not hasattr(gee, "verify_can_read"):
+    problems.append("gee_utils is stale -- no authenticate / verify_can_read")
+if not hasattr(gee, "EEPermissionError"):
+    problems.append("gee_utils is stale -- no EEPermissionError "
+                    "(a 403 will not be reported clearly)")
+if not hasattr(gee, "NBR_BANDS") or not hasattr(gee, "dataset_kind"):
+    problems.append("gee_utils is stale -- no NBR_BANDS / dataset_kind")
+if not hasattr(gee, "project_ids_from_dotenv"):
+    problems.append("gee_utils is stale -- no project_ids_from_dotenv")
+if len(getattr(qf, "QUALITY_FEATURES", []) or []) == 0:
+    problems.append("quality_features looks empty (no QUALITY_FEATURES)")
+if not hasattr(expl, "shap_explain") or not hasattr(expl, "top_contributions"):
+    problems.append("explainability is stale -- no shap_explain / top_contributions")
+if not hasattr(leak, "cross_split_proximity") or not hasattr(leak, "probe"):
+    problems.append("leakage_probe is stale -- no cross_split_proximity / probe")
+if not hasattr(leak, "RADII_KM"):
+    problems.append("leakage_probe is stale -- no RADII_KM")
+if not hasattr(figs, "all_metrics") or not hasattr(figs, "full_confusion_report"):
+    problems.append("figures is stale -- no all_metrics / full_confusion_report "
+                    "(the P8 confusion report would silently lack most measures)")
+if not hasattr(__import__("colab_runcell"), "run"):
+    problems.append("colab_runcell is stale -- no run()")
+
 if problems:
     print("FAILED:")
     for line in problems:
@@ -223,6 +321,84 @@ print(f"  labels      : {len(lab.LABEL_CLASSES)} classes")
 print(f"  weak labels : {len(weak.LABEL_INPUT_FEATURES)} rule inputs published")
 print(f"  site grid   : {db.SITE_DEG} deg")
 print(f"  calibration: {len(rcal.DEFAULT_PERCENTILES)} thresholds derived")
+print(f"  thresholds  : {hasattr(tcal, 'calibrate_operating_threshold')} "
+      f"(target-scaling fix: {hasattr(rcal, 'scale_targets')})")
+print(f"  gold set    : {len(gs.GOLD_CLASSES)} classes, "
+      f"boundary band {gs.BOUNDARY_BAND_M}")
+print(f"  gee_utils   : {gee.__version__}  "
+      f"(permission-aware: {hasattr(gee, 'EEPermissionError')})")
+
+
+# ---------------------------------------------------------------------------
+# CELL VERSIONS -- the check that would have caught the 14,229-byte upload
+#
+# Modules are verified by hasattr. A CELL is a script, so an old copy runs
+# happily and fails in a way that reads as a live bug. So each uploaded cell is
+# read back off Drive and its declared version compared against the floor.
+# ---------------------------------------------------------------------------
+import re as _re
+
+_VERSION_RE = _re.compile(
+    r"([A-Z][A-Z0-9_]*_VERSION|__version__)\s*=\s*[\"']([^\"']+)[\"']")
+
+
+def _declared_version(text):
+    for _n, v in _VERSION_RE.findall(text):
+        return v
+    return None
+
+
+def _floor_ok(found, floor):
+    """Version-tuple ordering, so 1.10.0 > 1.2.0."""
+    def parts(v):
+        return tuple(int("".join(c for c in ch if c.isdigit()) or 0)
+                     for ch in str(v).replace("-", ".").split("."))
+    return parts(found) >= parts(floor)
+
+
+print()
+print("=" * 70)
+print("CELL VERSIONS (read back off Drive)")
+print("=" * 70)
+cell_problems = []
+_floors = CELL_VERSION_FLOORS
+for _stem, _floor in sorted(_floors.items()):
+    _path = PIPELINE / f"{_stem}.py"
+    if not _path.exists():
+        cell_problems.append(f"{_stem}: not uploaded at all")
+        print(f"  {_stem:<28} NOT UPLOADED")
+        continue
+    _v = _declared_version(_path.read_text(errors="replace"))
+    if _floor is None:
+        _note = "no floor (exempt)"
+        print(f"  {_stem:<28} {_v or 'no marker':<20} {_note}")
+        continue
+    if _v is None:
+        cell_problems.append(
+            f"{_stem}: NO VERSION MARKER -- this is an old copy that predates "
+            f"versioning, or a different file. Cannot be verified.")
+        print(f"  {_stem:<28} NO MARKER  <-- STALE")
+        continue
+    if not _floor_ok(_v, _floor):
+        cell_problems.append(f"{_stem}: version {_v} < required {_floor}")
+        print(f"  {_stem:<28} {_v:<20} STALE (need >= {_floor})")
+    else:
+        print(f"  {_stem:<28} {_v:<20} ok")
+
+if cell_problems:
+    print()
+    print("STALE CELLS -- these will run OLD code:")
+    for _line in cell_problems:
+        print(f"  - {_line}")
+    print()
+    print("A cell is pasted notebook TEXT, so editing the repo file changes")
+    print("nothing about a copy you already uploaded or pasted. Re-upload the")
+    print(".py files themselves, and run cells via colab_runcell rather than")
+    print("pasting their bodies:")
+    print()
+    print("    import colab_runcell")
+    print('    colab_runcell.run("colab_p7e_gee_probe")')
+    raise SystemExit(1)
 print("  all modules agree")
 print()
 print(cu.drive_report())

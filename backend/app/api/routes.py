@@ -3,6 +3,9 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from datetime import datetime
 
+import numpy as np
+from sqlalchemy.exc import SQLAlchemyError
+
 from app.core.config import settings
 from app.core.database import get_db
 from app.models import models
@@ -134,24 +137,72 @@ def get_event_features(event_id: str, db: Session = Depends(get_db)):
         missing_fraction=0.08
     )
 
-# --- 2. Model Explanation / SHAP (api-contract Section 2) ---
-@router.get("/events/{event_id}/shap", response_model=schemas.ShapResponse)
-def get_event_shap(event_id: str, db: Session = Depends(get_db)):
-    ef = db.query(models.EventFeatures).filter(models.EventFeatures.event_id == event_id).first()
-    if ef and ef.shap_json:
-        return schemas.ShapResponse(
-            event_id=event_id,
-            by_family=ef.shap_json.get("by_family", {}),
-            top_features=ef.shap_json.get("top_features", [])
-        )
-    
-    # Instant precomputed fallback
-    computed = precompute_shap_explanations("wildfire", {})
-    return schemas.ShapResponse(
-        event_id=event_id,
-        by_family=computed["by_family"],
-        top_features=computed["top_features"]
+# --- 2. Model Explanation (SHAP / LIME) ---
+# Replaces precompute_shap_explanations(), which returned the SAME fixed
+# contributions whatever the input. An explanation that does not vary with the
+# event is not an explanation.
+@router.post("/events/{event_id}/explain", response_model=schemas.ExplainResponse)
+def explain_event(event_id: str, request: schemas.ExplainRequest):
+    import explainability as ex
+
+    name = request.model or settings.SERVING_MODEL_DEFAULT
+    try:
+        model = get_registry().load(name)
+    except ModelNotAvailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+    features = dict(request.features)
+    db_row = None
+    db: Session = Depends(get_db)
+    try:
+        ef = db.query(models.EventFeatures) \
+              .filter(models.EventFeatures.event_id == event_id).first()
+        if ef and ef.features_json:
+            db_row = {k: (v.get("value") if isinstance(v, dict) else v)
+                      for k, v in ef.features_json.items()}
+    except SQLAlchemyError:
+        # No database: serve from the request body alone rather than 500.
+        db_row = None
+    finally:
+        db.close()
+
+    merged = {**db_row, **features}
+
+    result = None
+    if request.method in ("shap", "both"):
+        try:
+            result = ex.shap_explain(model.booster, model.features, merged, name)
+        except ex.MissingFeatureError as exc:
+            if request.method == "shap":
+                raise HTTPException(status_code=422, detail=str(exc))
+    lime_exp = None
+    if request.method in ("lime", "both"):
+        try:
+            lime_exp = ex.lime_explain(model.booster, model.features, merged, name)
+        except ex.MissingFeatureError as exc:
+            if request.method == "lime":
+                raise HTTPException(status_code=422, detail=str(exc))
+
+    payload = (result or lime_exp).as_dict()
+    if result is not None and lime_exp is not None:
+        payload["method"] = "shap+lime"
+        payload["stability"] = ex.compare_methods(result, lime_exp)
+    elif lime_exp is not None:
+        payload = lime_exp.as_dict()
+    payload["n_features_expected"] = model.features and len(model.features)
+    payload["n_features_supplied"] = sum(
+        1 for f in model.features
+        if merged.get(f) is not None
+        and not (isinstance(merged.get(f), float) and np.isnan(merged.get(f)))
     )
+    payload["missing_features"] = [
+        f for f in model.features
+        if merged.get(f) is None
+        or (isinstance(merged.get(f), float) and np.isnan(merged.get(f)))
+    ]
+    payload["caveats"] = list(get_registry().describe(name)["caveats"])
+    return schemas.ExplainResponse(**payload)
+
 
 # --- 3. Weather Forecast (api-contract Section 3) ---
 @router.get("/events/{event_id}/forecast", response_model=schemas.ForecastResponse)

@@ -168,6 +168,18 @@ class PredictResponse(BaseModel):
     target: str
     probability: float = Field(..., ge=0.0, le=1.0)
     confidence: float = Field(..., ge=0.0, le=1.0)
+    # The two thresholds are DIFFERENT constraints. Only
+    # `auto_accept_threshold` should gate an automatic alert; it is
+    # max(calibrated tau, review_confidence). `review_confidence` is the
+    # brief's fixed 0.60 human-review floor.
+    auto_accept_threshold: float
+    operating_threshold: Optional[float] = None
+    has_operating_point: bool = Field(
+        ...,
+        description="False when no calibrated threshold could be frozen. "
+                    "Every event then requires human review.",
+    )
+    above_auto_accept_threshold: bool
     above_review_threshold: bool
     requires_human_review: bool
     review_confidence: float
@@ -186,6 +198,9 @@ class ModelCard(BaseModel):
     features: List[str]
     best_iteration: int
     review_confidence: float
+    operating_threshold: Optional[float] = None
+    auto_accept_threshold: float
+    has_operating_point: bool
     trained_on: Optional[str] = None
     n_train: Optional[int] = None
     n_test: Optional[int] = None
@@ -200,3 +215,30 @@ class ModelsStatus(BaseModel):
     loaded: List[str]
     serving_default: str
     note: str
+
+
+# --- Model explainability (SHAP / LIME) ---
+class ExplainRequest(BaseModel):
+    features: Dict[str, Optional[float]] = Field(
+        default_factory=dict,
+        description="Feature name -> value. Unmeasured features are reported, "
+                    "never replaced with zero.",
+    )
+    model: str = Field(default="B", description="B (default) or A")
+    method: Literal["shap", "lime", "both"] = "both"
+
+class ExplainResponse(BaseModel):
+    method: str
+    model: str
+    base_value: Optional[float] = None
+    prediction: Optional[float] = None
+    by_family: Dict[str, float]
+    top_features: List[TopFeatureContribution]
+    n_features_expected: int
+    n_features_supplied: int
+    missing_features: List[str] = Field(default_factory=list)
+    stability: Optional[Dict[str, Any]] = None
+    caveats: List[str] = Field(
+        default_factory=list,
+        description="Why this explanation must not be read as a causal claim.",
+    )

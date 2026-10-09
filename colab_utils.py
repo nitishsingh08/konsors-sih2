@@ -358,7 +358,13 @@ MAX_SEARCH_DEPTH = 4
 
 
 def find_all_artefact(project_root, leaf_name, max_depth=MAX_SEARCH_DEPTH):
-    """Every directory named `leaf_name` under `project_root`, shallowest first.
+    """Every entry named `leaf_name` under `project_root`, shallowest first.
+
+    Matches FILES as well as DIRECTORIES. It previously only ever examined
+    directories, which is fine for its original callers (`clusters/`, `edges/`)
+    and silently useless for a file: `find_artefact(root,
+    "canonical_event_base.parquet")` returned None at every depth and the
+    depth limit looked like the cause. It was not -- a file could never match.
 
     The Drive currently holds `clusters/` and `edges/` in TWO places --
     `Firm_Clusters/clusters/` and `Firm_Clusters/full_2012_2026/clusters/`.
@@ -374,22 +380,34 @@ def find_all_artefact(project_root, leaf_name, max_depth=MAX_SEARCH_DEPTH):
     seen = {root}
     while queue:
         current, depth = queue.pop(0)
-        if current.name == leaf_name:
+        if current.name == leaf_name and current != root:
             matches.append((current, depth))
-            continue          # do not descend into a match
         if depth >= max_depth:
             continue
         try:
-            children = sorted(p for p in current.iterdir() if p.is_dir())
+            children = sorted(p for p in current.iterdir())
         except OSError:
             continue
         for child in children:
-            if child in seen:
-                continue
-            seen.add(child)
-            queue.append((child, depth + 1))
+            # Descend into directories only. A matched directory is reported
+            # but still walked, because `Firm_Clusters/full_2012_2026` may hold
+            # a deeper copy of the same name.
+            if child.is_dir():
+                if child in seen:
+                    continue
+                seen.add(child)
+                queue.append((child, depth + 1))
+            elif child.name == leaf_name:
+                matches.append((child, depth + 1))
     matches.sort(key=lambda t: (t[1], str(t[0])))
-    return matches
+    # Deduplicate: a match can be recorded by both the walk and the name test.
+    out, seen_paths = [], set()
+    for path, depth in matches:
+        if path in seen_paths:
+            continue
+        seen_paths.add(path)
+        out.append((path, depth))
+    return out
 
 
 def find_artefact(project_root, leaf_name, max_depth=MAX_SEARCH_DEPTH):
@@ -398,6 +416,63 @@ def find_artefact(project_root, leaf_name, max_depth=MAX_SEARCH_DEPTH):
     if not matches:
         return None, None
     return matches[0][0], matches[0][1]
+
+
+def find_artefact_path(project_root, leaf_name, max_depth=MAX_SEARCH_DEPTH):
+    """Just the Path from `find_artefact`, or None.
+
+    `find_artefact` returns `(Path, depth)`. Every cell that only wants the path
+    used to unpack it by hand, and one of them (P7e section 4) did not -- so
+    `pd.read_parquet` received a TUPLE and failed with
+    `TypeError: cannot construct a FileSource from (None, None)`, which says
+    nothing about the real cause. This exists so that mistake is unrepresentable.
+    """
+    path, _depth = find_artefact(project_root, leaf_name, max_depth)
+    if path is None:
+        return None
+    return path if path_ok(path) else None
+
+
+def describe_missing_artefact(project_root, leaf_name, max_depth=MAX_SEARCH_DEPTH,
+                              limit=12):
+    """Say WHERE an artefact was looked for, and what similar names exist.
+
+    "could not find canonical_event_base.parquet" is unactionable. The real
+    question is whether the file is missing, is deeper than `max_depth`, or has
+    a slightly different name -- and this distinguishes those, because the
+    duplicate-folder hazard has already produced one false "the data is missing"
+    diagnosis in this project.
+    """
+    lines = [f"  searched under {project_root} to depth {max_depth}"]
+    roots = []
+    try:
+        roots = sorted(p for p in project_root.rglob(leaf_name)
+                       if p.is_file())
+    except OSError as exc:
+        lines.append(f"    (walk failed: {exc})")
+    if roots:
+        lines.append("  FOUND but too deep or not matched:")
+        for p in roots[:limit]:
+            lines.append(f"    {p}")
+    else:
+        # Look for near-misses: a differently suffixed or spelled sibling.
+        stem = Path(leaf_name).stem
+        near = []
+        try:
+            for p in project_root.rglob("*.parquet"):
+                if stem.lower() in p.name.lower() and p.is_file():
+                    near.append(p)
+                    if len(near) >= limit:
+                        break
+        except OSError:
+            pass
+        if near:
+            lines.append(f"  no exact match. Similar parquet files found:")
+            for p in near:
+                lines.append(f"    {p}")
+        else:
+            lines.append("  no file with a similar name anywhere in the tree.")
+    return "\n".join(lines)
 
 
 def resolve_artefacts(project_root, wanted=None, verbose=True):
@@ -539,3 +614,79 @@ class LazyParquetWriter:
     def __exit__(self, *exc):
         self.close()
         return False
+
+
+# ---------------------------------------------------------------------------
+# EVENT TIMESTAMPS
+#
+# meta.parquet has NO `start_month`. Verified against the real file on
+# 2026-10-07: its columns are
+#
+#     event_id, event_centroid_lon, event_centroid_lat,
+#     start_time (timestamp[ns]), start_year (int64),
+#     spatial_block, site_id
+#
+# Two cells asked for `start_month` anyway and raised ArrowInvalid before any
+# Earth Engine call -- which, in an 11-hour extraction, is the worst possible
+# moment to find out. `start_year` exists but `start_month` does not, so the
+# month has to come from `start_time`.
+# ---------------------------------------------------------------------------
+
+#: Columns every event table must have for the imagery cells to run.
+REQUIRED_EVENT_COLUMNS = ("event_id", "start_year", "start_time",
+                          "event_centroid_lon", "event_centroid_lat")
+
+
+def event_year_month(meta_path, verbose=True):
+    """`(years, months)` as int16/int8 arrays, one entry per row of meta.parquet.
+
+    Reads only what it needs -- the full table is never materialised -- and
+    derives the month from `start_time`, because `start_month` is not a column
+    that exists.
+
+    `start_year` is CROSS-CHECKED against the timestamp rather than trusted. If
+    the two disagree, one of them is wrong, and picking the wrong one silently
+    shifts an event into an adjacent month -- which for NBR means sampling the
+    wrong composite and producing a plausible, meaningless dNBR. Disagreement is
+    therefore reported, not resolved.
+
+    Returns arrays of length `n`, with NaN-free int values: an event with an
+    unusable timestamp is reported in the printout and skipped by the caller's
+    coverage filter, never given a fabricated month.
+    """
+    import numpy as np
+    import pandas as pd
+    import pyarrow.parquet as pq
+
+    cols = set(pq.ParquetFile(meta_path).schema_arrow.names)
+    missing = [c for c in REQUIRED_EVENT_COLUMNS if c not in cols]
+    if missing:
+        raise KeyError(
+            f"{meta_path} is missing {missing}; available: {sorted(cols)}. "
+            f"Every imagery cell needs the event timestamp to choose a "
+            f"composite month, so this is not optional.")
+
+    df = pd.read_parquet(meta_path,
+                         columns=["start_year", "start_time"])
+    ts = pd.to_datetime(df["start_time"], errors="coerce")
+    years = ts.dt.year.to_numpy(dtype="float64")
+    months = ts.dt.month.to_numpy(dtype="float64")
+    declared = df["start_year"].to_numpy(dtype="float64")
+
+    bad_ts = int(np.isnan(years).sum())
+    disagree = int(np.sum(~np.isnan(years) & ~np.isnan(declared)
+                          & (years != declared)))
+    if verbose:
+        print(f"  start_time unusable : {bad_ts:,}")
+        print(f"  start_year disagrees with start_time's year: {disagree:,}")
+        if disagree:
+            # Not fatal -- the timestamp wins -- but it must be visible, because
+            # a systematic disagreement means the composite month is being
+            # chosen from the wrong field for a whole block of events.
+            print("  WARNING: using start_time's year, not start_year. If this")
+            print("  number is large, the month being sampled is wrong for those")
+            print("  rows and the resulting NBR/SAR features are meaningless.")
+    if bad_ts == len(df):
+        raise ValueError(f"every start_time in {meta_path} is unusable")
+
+    return years.astype("int16"), months.astype("int8")

@@ -11,6 +11,7 @@ Run:  python3 -m unittest test_colab_utils
 from __future__ import annotations
 
 import errno
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -227,6 +228,70 @@ class TestLazyParquetWriter(unittest.TestCase):
             with cu.LazyParquetWriter(P(tmp) / "ctx.parquet") as writer:
                 self.assertFalse(writer.opened)
             self.assertFalse(writer.opened)
+
+
+class TestMissingArtefactDescription(unittest.TestCase):
+    """'could not find X' is unactionable.
+
+    The duplicate-folder hazard has already produced one false "the data is
+    missing" diagnosis in this project, so the message must distinguish: not
+    present, present but too deep, and present under a slightly different
+    name.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+
+    def test_it_lists_a_deep_match_rather_than_claiming_absence(self):
+        deep = self.root / "a" / "b" / "c" / "d" / "event_base.parquet"
+        deep.parent.mkdir(parents=True)
+        deep.write_bytes(b"x")
+        out = cu.describe_missing_artefact(self.root, "event_base.parquet")
+        self.assertIn("FOUND but too deep", out)
+        self.assertIn("event_base.parquet", out)
+
+    def test_it_finds_a_near_miss_by_name(self):
+        other = self.root / "clusters" / "canonical_event_base_v2.parquet"
+        other.parent.mkdir(parents=True)
+        other.write_bytes(b"x")
+        out = cu.describe_missing_artefact(
+            self.root, "canonical_event_base.parquet")
+        self.assertIn("Similar parquet files", out)
+        self.assertIn("canonical_event_base_v2.parquet", out)
+
+    def test_genuine_absence_is_stated_plainly(self):
+        out = cu.describe_missing_artefact(self.root, "nothing_here.parquet")
+        self.assertIn("no file with a similar name", out)
+        self.assertNotIn("FOUND but too deep", out)
+
+    def test_it_names_the_depth_it_searched(self):
+        out = cu.describe_missing_artefact(self.root, "x.parquet",
+                                           max_depth=4)
+        self.assertIn("depth 4", out)
+
+
+class TestRuncellIntegration(unittest.TestCase):
+    """The bootstrap must ship the cell runner, or the stale-paste habit
+    continues."""
+
+    def test_bootstrap_requires_colab_runcell(self):
+        src = (Path(__file__).resolve().parent
+               / "colab_bootstrap.py").read_text()
+        self.assertIn('"colab_runcell": None', src)
+        self.assertIn("colab_runcell is stale", src)
+
+    def test_bootstrap_prints_a_version(self):
+        src = (Path(__file__).resolve().parent
+               / "colab_bootstrap.py").read_text()
+        self.assertIn("BOOTSTRAP_VERSION", src)
+
+    def test_the_p7e_cells_report_missing_artefacts_usefully(self):
+        for name in ("colab_p7e_gee_probe.py",
+                     "colab_p7f_landcover_direct.py"):
+            src = (Path(__file__).resolve().parent / name).read_text()
+            self.assertIn("describe_missing_artefact", src, name)
 
 
 if __name__ == "__main__":

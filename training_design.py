@@ -46,23 +46,43 @@ LABEL_DERIVED: "list[str]" = list(fl.LABEL_DERIVED_FEATURES)
 NON_LEAK: "list[str]" = list(fl.NON_LEAK_FEATURES)
 
 
-def label_input_features():
+def label_input_features(include_surface: bool = True):
     """Features that manufacture y and must never enter the scientific model.
 
-    Two disjoint sources:
+    Three sources:
       * the 18 `LABEL_DERIVED` industrial features
       * every input of the weak rule hierarchy in `weak_labels`
+      * every input of the SURFACE label in `surface_labels`
 
     The second set is not optional. The weak rules reduce largely to "was this
     event near a facility", so `DIST_*` decides y; leaving `DIST_*` in X would
     let the model learn the labelling rule instead of the class.
+
+    THE THIRD SET IS WHAT MAKES MODEL B WORTH MEASURING. Measured on the full
+    catalogue (2026-10-05): 70.1% of weak INDUSTRIAL_FIRE sits on vegetated
+    substrate, precision 0.299 against a substrate proxy. More importantly the
+    weak rules read only columns that are already IN X, so excluding them
+    leaves model B blind to the evidence behind its own target -- it cannot win
+    because the target carried no information it was allowed to use.
+
+    `surface_labels` reads `LANDCOVER_VEGETATED`, which comes from a raster
+    absent from X. With that in the label, and excluded here, the two no longer
+    share an input and model B's score means something.
+
+    `include_surface=False` reproduces the OLD partition exactly, which is what
+    a before/after comparison needs.
     """
     import weak_labels
 
-    return set(fl.LABEL_DERIVED_FEATURES) | set(weak_labels.LABEL_INPUT_FEATURES)
+    forbidden = set(fl.LABEL_DERIVED_FEATURES) | set(
+        weak_labels.LABEL_INPUT_FEATURES)
+    if include_surface:
+        import surface_labels
+        forbidden |= set(surface_labels.surface_label_inputs())
+    return forbidden
 
 
-def split_feature_sets(available):
+def split_feature_sets(available, include_surface: bool = True):
     """Partition the *available* features into A (all) and B (non-leak).
 
     Parameters
@@ -78,7 +98,7 @@ def split_feature_sets(available):
     import weak_labels
 
     have = set(available)
-    forbidden = label_input_features()
+    forbidden = label_input_features(include_surface)
     model_a = [f for f in fl.FEATURES_141 if f in have]
     model_b = [f for f in fl.FEATURES_141
                if f in have and f not in forbidden]

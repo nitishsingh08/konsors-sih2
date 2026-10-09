@@ -43,7 +43,9 @@ class _FakeBooster:
 _WRITTEN = {}
 
 
-def _write_model(directory, name, features, target="INDUSTRIAL_FIRE"):
+def _write_model(directory, name, features, target="INDUSTRIAL_FIRE",
+                 operating_threshold=None, auto_accept_threshold=None,
+                 write_threshold=True):
     booster = _FakeBooster()
     _WRITTEN[name] = booster
     payload = {
@@ -57,6 +59,16 @@ def _write_model(directory, name, features, target="INDUSTRIAL_FIRE"):
         "n_train": 1_500_000,
         "n_test": 600_000,
     }
+    if write_threshold:
+        # P7 always writes these together. `operating_threshold` may legitimately
+        # be None, which is the "no operating point freezable" result.
+        payload["operating_threshold"] = operating_threshold
+        payload["auto_accept_threshold"] = (
+            auto_accept_threshold
+            if auto_accept_threshold is not None
+            else (0.60 if operating_threshold is None
+                  else max(0.60, operating_threshold))
+        )
     path = Path(directory) / f"model_{name}.pkl"
     with path.open("wb") as fh:
         pickle.dump(payload, fh)
@@ -76,6 +88,80 @@ class ModelRegistryBase(unittest.TestCase):
         from app.services.model_registry import ModelRegistry
 
         return ModelRegistry(self.dir)
+
+
+class TestOperatingThreshold(ModelRegistryBase):
+    """The calibrated threshold must survive a reload and gate the decision.
+
+    The failure these pin: a pickle written without a calibrated threshold
+    reloads, silently uses the bare 0.60 literal, and flags 0.8% of positives
+    while reporting confident precision. That is the "detects 2 of 100" bug.
+    """
+
+    def test_calibrated_threshold_is_loaded(self):
+        _write_model(self.dir, "B", FEATURES, operating_threshold=0.875131)
+        model = self.registry().load("B")
+        self.assertAlmostEqual(model.operating_threshold, 0.875131, places=9)
+        self.assertTrue(model.has_operating_point)
+
+    def test_auto_accept_is_the_tighter_of_tau_and_the_review_floor(self):
+        _write_model(self.dir, "B", FEATURES, operating_threshold=0.875131)
+        self.assertAlmostEqual(
+            self.registry().load("B").auto_accept_threshold, 0.875131, places=9
+        )
+        _write_model(self.dir, "A", FEATURES, operating_threshold=0.033204)
+        self.assertAlmostEqual(
+            self.registry().load("A").auto_accept_threshold, 0.60, places=9
+        )
+
+    def test_missing_operating_point_is_admitted_not_hidden(self):
+        _write_model(self.dir, "B", FEATURES, operating_threshold=None)
+        model = self.registry().load("B")
+        self.assertFalse(model.has_operating_point)
+        self.assertIsNone(model.operating_threshold)
+        # Falls back to the brief's floor, so nothing is auto-accepted.
+        self.assertAlmostEqual(model.auto_accept_threshold, 0.60, places=9)
+
+    def test_pre_calibration_artefact_still_loads(self):
+        """Old pickles have no key at all; that must degrade, not crash."""
+        _write_model(self.dir, "B", FEATURES, write_threshold=False)
+        model = self.registry().load("B")
+        self.assertFalse(model.has_operating_point)
+        self.assertAlmostEqual(model.auto_accept_threshold, 0.60, places=9)
+
+    def test_review_floor_is_not_used_as_the_operating_point(self):
+        """A 0.42 probability clears 0.60? No. But tau governs the decision."""
+        _write_model(self.dir, "B", FEATURES, operating_threshold=0.30)
+        out = self.registry().predict("B", {"FRP_MEDIAN": 42.0})
+        # places=6: the matrix is float32, so 42.0/100.0 is not bit-exact.
+        self.assertAlmostEqual(out["probability"], 0.42, places=6)
+        # auto_accept is max(0.30, 0.60) = 0.60, so 0.42 still needs review.
+        self.assertTrue(out["requires_human_review"])
+        self.assertFalse(out["above_auto_accept_threshold"])
+        # ...while the bare review floor agrees here. The two differ elsewhere.
+        self.assertAlmostEqual(out["review_confidence"], 0.60, places=9)
+        self.assertAlmostEqual(out["auto_accept_threshold"], 0.60, places=9)
+
+    def test_taut_above_0_60_that_fails_tau_is_flagged_as_review(self):
+        """0.70 clears the brief's floor but not a calibrated tau of 0.875."""
+        _write_model(self.dir, "B", FEATURES, operating_threshold=0.875131)
+        out = self.registry().predict("B", {"FRP_MEDIAN": 70.0})
+        self.assertTrue(out["above_review_threshold"])
+        self.assertFalse(out["above_auto_accept_threshold"])
+        self.assertTrue(out["requires_human_review"])
+
+    def test_card_reports_the_operating_point(self):
+        _write_model(self.dir, "B", FEATURES, operating_threshold=0.875131)
+        card = self.registry().describe("B")
+        self.assertAlmostEqual(card["operating_threshold"], 0.875131, places=9)
+        self.assertAlmostEqual(card["auto_accept_threshold"], 0.875131, places=9)
+        self.assertTrue(card["has_operating_point"])
+
+    def test_card_admits_a_missing_operating_point(self):
+        _write_model(self.dir, "B", FEATURES, operating_threshold=None)
+        card = self.registry().describe("B")
+        self.assertIsNone(card["operating_threshold"])
+        self.assertFalse(card["has_operating_point"])
 
 
 class TestLoading(ModelRegistryBase):

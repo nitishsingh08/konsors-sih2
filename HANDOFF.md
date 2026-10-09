@@ -71,6 +71,19 @@ mining 60k. If the distribution moves, re-run P6 -- never hand-edit thresholds.
 also sees, so PR-AUC on it is an upper bound, not generalisation; and the strict
 `label` column remains ~100% UNKNOWN pending land cover and weather.
 
+**The operating threshold is now implemented (2026-10-04).** §8's policy —
+"freeze tau maximising F2 subject to precision >= 0.90" — had never been written.
+`REVIEW_CONFIDENCE = 0.60` was a bare literal applied to models that are not
+calibrated to a 0.60 prior, and model B's held-out scores sit near 0.13, so the
+flat cut flagged **0.8% of positives**. That was the "detects 2 of 100"
+symptom. `threshold_calibration.py` now freezes tau on the TRAIN fold only and
+returns `threshold: None` with a reason when the constraint is unreachable.
+Measured: model B's only precision-0.90 point is tau=0.875 at 0.04% recall;
+model A's tau=0.033 flags 16.5% of rows against a 16.39% prevalence, which is
+the circularity of §15 shown numerically. **This does not make either model
+better.** It makes the deployed bar honest. The performance gap is a feature
+gap — see below.
+
 **Measured coverage: 33 usable / 20 sparse / 88 missing = 23.4% of the 141
 spec.** The 88 split 18 DERIVE / 46 EXTERNAL_RASTER / 24 EXTERNAL_TABLE; 6 of
 the 18 DERIVE features are permanently unavailable, leaving **12** realisable
@@ -626,6 +639,11 @@ Validation splits (not random — both spatial and temporal leakage inflate):
 3. combined `year × block` for the honest final number
 
 Freeze an operating threshold τ maximising F2 subject to precision ≥ 0.90.
+**Now implemented** — `threshold_calibration.py`, calibrated on the TRAIN fold
+only, persisted in the pickle. Note that τ and the 0.60 review floor are
+*different constraints*: auto-accept requires `score >= max(τ, 0.60)`. A `τ` of
+`None` means no operating point was freezable and every event goes to a human;
+it must never be read as "no constraint".
 
 ---
 
@@ -653,6 +671,16 @@ Freeze an operating threshold τ maximising F2 subject to precision ≥ 0.90.
   constantly, and an arbitrary tie order turns a useless model into PR-AUC 1.0
 - Report model A and model B. Reporting A alone is facility-prior leakage;
   reporting B alone hides that the operational system uses those priors
+- Never apply a bare `REVIEW_CONFIDENCE = 0.60` as a classifier threshold. It is
+  the brief's human-review floor, not an operating point, and it is meaningless
+  on a model that is not calibrated to that prior. Use
+  `effective_threshold(tau, 0.60)`
+- Never substitute a threshold when calibration returns `None`. Report that no
+  operating point exists; a fallback number becomes a false coverage claim
+- `dist_m` is metres and `DIST_*_LOG` is `log10(1 + d_metres)`. They were once
+  interchanged in the evaluation CSVs, which moved the column by four orders of
+  magnitude while leaving every ranking-based metric untouched. Unit labels are
+  now guarded at runtime in P7 and statically in `test_colab_cells`
 - P3a: verify the printed CATEGORY MAP by eye before computing — a wrong
   mapping corrupts both the features and the labels, and neither shows up as
   an error
@@ -675,6 +703,8 @@ colab_utils.py                    dead-mount-safe checks + project-root resoluti
 lineage_features.py                P4a tier 2: detection-level lineage
 cluster_tier.py                    P4a tier 1: 34 features from clusters/ only
 training_design.py                 P7: leakage partition, splits, baselines, metrics
+threshold_calibration.py           P7: operating threshold (F2, precision >= 0.90), TRAIN only
+test_threshold_calibration.py      33 tests: ties, infeasible precision, degeneracy, None handling
 colab_recon.py                     Colab: whole-project recon -> qc/project_recon.json
 fire_labels.py                     P5 label rule cascade (6 classes)
 build_feature_audit.py             local ledger builder, asserts Gate P1
@@ -695,6 +725,11 @@ colab_p3a_diagnose_external.py     Colab: read-only A/B/C/D verdict, missing ext
 colab_p3a_remount_drive.py         Colab: non-destructive probe mount to locate the real Drive
 colab_p4a_lineage.py                Colab: stream daily clusters -> 54 features per event
 colab_bootstrap.py                  THE bootstrap cell (self-healing, no MODULES list)
+colab_p7k_nbr_change.py             Colab: monthly Landsat NBR per event, sharded+resumable
+colab_p7l_sar.py                    Colab: monthly Sentinel-1 VV/VH per event, sharded+resumable
+colab_p7k_nbr.py                    RETIRED draft -- stub that refuses to run
+test_colab_p7k.py                   26 tests: P7k rehearsal against stubbed Drive/ee
+test_colab_p7l.py                   23 tests: P7l rehearsal against stubbed Drive/ee
 qc/                                generated ledger + work list
 Stage1..Stage6.ipynb               clustering + production (no feature extractor)
 backend/ frontend/ react-frontend/ AGNI-NETRA + SPARC design docs
@@ -704,8 +739,159 @@ SYSTEM_ARCHITECTURE.md
 
 Repo has **no** AGENTS.md lint/typecheck commands — this is a data-science
 repo. Verification =
-`python3 -m unittest test_feature_ledger test_industrial_features test_fire_labels test_lineage_features test_colab_utils test_colab_root` (220 tests) and
+`python3 -m unittest test_feature_ledger test_industrial_features test_fire_labels test_lineage_features test_colab_utils test_colab_root test_cluster_tier test_training_design test_colab_cells test_dataset_builder test_weak_labels test_feature_gap test_threshold_calibration test_explainability test_rule_calibration test_gee_utils test_colab_p7k test_colab_p7l` (718 tests) and
 `python3 build_feature_audit.py --outdir qc`.
+Backend: `cd backend && python3 -m unittest discover -s tests` (30 tests).
 
 Note: local machine has no `pyarrow`, so `build_feature_audit.py` writes CSV
 only. Colab has pandas+pyarrow and writes parquet.
+
+---
+
+## 16. P7k (NBR) and P7l (SAR) -- built 2026-10-07, not yet run
+
+Two new multi-hour Earth Engine cells complete the burn-evidence chain.
+Both are sharded and resumable in exactly the P7h pattern (shard identity
+derived from the chunk number, atomic `.partial` rename, resume validated
+against expected row counts), both sample `meta.parquet` DIRECTLY (no P7h
+dependency), and both were rehearsed end-to-end against stubbed Drive/ee
+(`test_colab_p7k.py` 26 tests, `test_colab_p7l.py` 23 tests).
+
+### What each cell produces
+
+| Cell | Output | Columns | Sensor / composite |
+|---|---|---|---|
+| `colab_p7k_nbr_change.py` | `qc/nbr_events.parquet` | row, event_id, start_year, start_month, NBR_PRE, NBR_POST, DNBR | Landsat C2 L2 monthly median, band `NBR` |
+| `colab_p7l_sar.py` | `qc/sar_events.parquet` | row, event_id, start_year, start_month, VV_PRE, VH_PRE, VV_POST, VH_POST, VV_CHANGE, VH_CHANGE, VV_VH_CHANGE | Sentinel-1 GRD monthly median, bands `VV`,`VH` (dB) |
+
+DNBR = NBR_PRE − NBR_POST, **positive where vegetation was lost** — this
+matches the ledger's DNBR ("burn severity", mean 0.05) and the schema
+comment. Note it is the NEGATIVE of fire_labels' `NBR_CHANGE` convention
+(negative = burnt); both signs are recorded here so no downstream code has
+to guess. VV/VH are dB medians; changes are post − pre.
+
+### New `gee_utils` helpers (v bumped to match)
+
+`month_before(y, m, lag)`, `nbr_monthly_composite(y, m, collection_id=None)`
+(single band `NBR`, standard (NIR−SWIR) convention, QA_PIXEL bits 3+4 masked,
+**CLOUD_COVER < 80 filter**), `_month_bounds(y, m)`, `sar_imagery_gap(years)`,
+`sar_monthly_composite(y, m)` (VV/VH, both orbit passes mixed — documented),
+`colab_utils.event_year_month(meta_path)`.
+
+### The bug this session caught before it cost a run
+
+`nbr_monthly_composite` originally filtered on
+`CLOUDY_PIXEL_PERCENTAGE < 80` — a **Sentinel-2** property. Landsat C2 L2
+carries `CLOUD_COVER`; filtering on a property the asset does not have
+silently excludes EVERY image, the composite goes empty, and the 11-hour run
+returns pure NaN with no error. Fixed to `CLOUD_COVER`. This is the same
+class of failure as the P7e zero-value AOI check: band/property presence
+must be verified against the catalog, not assumed.
+
+### Two static-check blind spots fixed in `test_colab_cells.py`
+
+1. `test_no_augmented_name_is_undeclared` did not count function PARAMETERS
+   as bindings (`ast.arg` is not a Store-context Name), so any function that
+   wrote into its own parameter was flagged. Parameters are now bound.
+2. Both P7k/P7l cells consequently take the composite cache as an explicit
+   parameter (`_composite(cache, y, m)`) instead of mutating a module global
+   — the hidden-state pattern the check exists to catch.
+
+### Retired: `colab_p7k_nbr.py`
+
+The first P7k draft (per-event EE calls, own-month composites so
+NBR_CHANGE ≡ 0, crash on missing coordinate columns) is now a stub that
+prints its defects and exits. A stale copy sits in Drive/pipeline from
+earlier uploads; uploading the stub replaces it.
+
+### How to run (Colab)
+
+```python
+import colab_runcell
+colab_runcell.run("colab_p7k_nbr_change")   # ~11 h, resumable
+colab_runcell.run("colab_p7l_sar")          # ~22 h (4 samples/event), resumable
+```
+
+Coverage: NBR from 2013 (Landsat 8), SAR from 2014 (Sentinel-1). Events
+before those years, with unparseable `start_time`, or with non-finite
+coordinates keep NaN — never 0. DNBR/DNDVI in the ledger's SAR group come
+from Sentinel-2 (separate question, not yet built); COHERENCE_LOSS has no
+GRD route and stays NaN rather than being faked.
+
+### Run 1 (2026-10-07, Colab): two crashes, same root cause, both fixed (v.2)
+
+Both cells died on the FIRST sample call. The month-coverage check was
+YEAR-granular, but the catalogs start mid-month:
+
+- **P7k** — `imagery_gap` says Landsat 8 = 2013, but L8 L2 data starts
+  **2013-03-18**. Months 2013-01/2013-02 passed the year rule, their
+  collection was EMPTY, and `median()` of an empty ImageCollection is a
+  ZERO-BAND image → `Image.normalizedDifference: Input image must have at
+  least 2 bands`.
+- **P7l** — GEE's S1 GRD archive starts **2014-10-03** (the ledger's
+  2014-05-03 era is first acquisition, which GEE does not carry). Months
+  2014-01..09 were "covered" → empty → `Image.sampleRegions: Invalid
+  numInputs: 0`.
+
+Fixes (cell versions 2026-10-07.2): gee_utils gains
+`LANDSAT8_FIRST_DATE` / `S1_GRD_FIRST_DATE` and the month-granular
+predicates `nbr_month_has_imagery` / `sar_month_has_imagery`; both cells
+intersect the year rule with the month rule and print the dropped months.
+Also removed the scene-level `CLOUD_COVER < 80` filter from
+`nbr_monthly_composite`: Indian monsoon months can have every scene above
+80% scene cloud, which is the same empty-collection crash one run later;
+the QA_PIXEL pixel mask does the real work and a median over clear pixels
+is the composite. Rehearsal stubs updated to the new chain, 4 new
+`MonthCoverageTests` in test_gee_utils (722 total).
+
+### Output folder (user request, v.2)
+
+Both cells now also write the assembled table to
+**`Firm_Clusters/nbr_sar_outputs/`** (`nbr_events.parquet`,
+`sar_events.parquet`) in addition to the pipeline-contract `qc/` paths
+that P7i/P7j read. Same bytes, two locations.
+
+### Run 2 outcome and two more fixes (2026-10-07)
+
+- **P7k COMPLETED.** 30/30 shards, 6,763,812 rows written (220,388-row
+  shard 0 was correctly trusted and skipped by the new resumed rule; total
+  ~5.1 h). NBR_POST non-NaN 6,447,430; DNBR mean +0.077 / median +0.055,
+  5,118,131 events positive (vegetation lost) — sanely burn-like.
+- **P7l shard-trust bug + short-shard bug** fixed in the same edit as P7k:
+  a completed shard holds only FILLED rows (not a fixed slot count), so the
+  resume check now trusts any within-band unique row set instead of an
+  exact-count match — an exact-count check would have DISCARDED and redone
+  every partially-filled shard on resume. New tests: shortened shard is
+  trusted / out-of-band shard is discarded (P7h-style corruption).
+- **P7l run 2 crash (EW swath) fixed.** `sar_monthly_composite` mixed
+  Sentinel-1 **EW** scenes (bands HH/HV) into the median, so
+  `select(["VV","VH"])` died with "Band pattern 'VV' did not match any
+  bands. Available bands: [HH, HV, angle]". Now filtered to
+  `instrumentMode == "IW"`. Regression test added. `gee_utils` v +1.
+- Suite: 724 tests, OK.
+
+### P7n (weather/FWI) and P7o (atmospheric chemistry) -- new, 2026-10-07
+
+New extraction cells complete the WEATHER_FIRE_DANGER and ATMOSPHERIC_CHEMISTRY
+ledger groups:
+
+- `fwi.py` (+ `test_fwi_weather.py`): pure, dependency-free Canadian FWI
+  system (FFMC/DMC/DC/ISI/BUI/FWI). DOCUMENTED approximation: moisture codes
+  carried on a monthly step, not the daily chain -- recorded in the module
+  docstring. Unit-tested for bounds and monotonicity.
+- `gee_utils` gains `era5_monthly_weather`, `era5_monthly_climatology`
+  (1991-2020), `s5p_monthly_median`, `s5p_monthly_climatology` (2019-2023),
+  and `sample_bands_chunked` (multi-band point sampling).
+- `colab_p7n_weather.py` (v2026-10-07.1) -> `qc/weather_events.parquet`
+  (+ weather_outputs/): T/RH/VPD/SOIL anomaly z-scores, WIND_SPEED, RAIN logs,
+  FWI family. NaN for unparseable dates; reads meta.parquet; sharded+resumable.
+- `colab_p7o_atmos.py` (v2026-10-07.1) -> `qc/atmos_events.parquet`
+  (+ atmos_outputs/): NO2/SO2/CO/CH4/HCHO/AOD anomaly z vs 2019-2023 monthly
+  climatology + CO_NO2_RATIO_LOG. Pre-2018 events stay NaN (TROPOMI archive).
+- **A chunk-level month-boundary bug was caught and fixed in all three new
+  cells**: a 5,000-row chunk can straddle two months; grouping now happens per
+  (year, month) within the chunk, so no event is ever sampled against a
+  neighbour's month.
+- Suite: 732 tests, OK (13 new). NOTE: the local `python3` on this machine
+  resolves to Homebrew 3.14 (no numpy); tests must run with
+  `/Library/Frameworks/Python.framework/Versions/3.13/bin/python3`.

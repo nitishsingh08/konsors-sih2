@@ -42,6 +42,13 @@ DEFAULT_MODEL_DIR = Path("qc/models")
 
 #: Below this the prediction goes to a human rather than to an alert. From the
 #: project brief: "any prediction below 60% confidence goes to human review".
+#:
+#: This is NOT an operating point. It is a fixed floor, and applying it to a
+#: model that is not calibrated to a 0.60 prior is meaningless: model B's
+#: held-out scores sit near 0.13, so a flat 0.60 cut flags 0.8% of positives.
+#: The real alert threshold is `LoadedModel.auto_accept_threshold`, calibrated
+#: by P7 and shipped inside the pickle. Keep this constant for the brief's rule;
+#: do not use it as a classifier threshold.
 REVIEW_CONFIDENCE = 0.60
 
 
@@ -64,7 +71,20 @@ class LoadedModel:
     label_column: str
     best_iteration: int
     review_confidence: float
+    auto_accept_threshold: float
+    operating_threshold: Optional[float] = None
     extra: Dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def has_operating_point(self) -> bool:
+        """False when P7 could not freeze a usable threshold.
+
+        A model with no operating point must degrade to "review everything",
+        never to "alert everything". `auto_accept_threshold` already handles
+        that; this exists so the API can say so out loud rather than letting a
+        caller infer it from a number.
+        """
+        return self.operating_threshold is not None
 
     def predict(self, features: Dict[str, Any]) -> Dict[str, Any]:
         """Score one event.
@@ -72,6 +92,12 @@ class LoadedModel:
         Missing keys become NaN; extra keys are rejected. Returns the
         probability, the confidence band, and which features were absent, so the
         caller can put the gaps on the alert instead of hiding them.
+
+        Two thresholds are reported and they mean different things:
+          `review_confidence`       0.60, the brief's human-review floor.
+          `auto_accept_threshold`   max(calibrated tau, review floor), and the
+                                    only value that should gate an automatic
+                                    alert.
         """
         if not isinstance(features, dict):
             raise ModelContractError("features must be a mapping")
@@ -110,8 +136,17 @@ class LoadedModel:
             "target": self.target,
             "probability": probability,
             "confidence": probability,
+            # The decision that matters, at the calibrated deployed bar.
+            "above_auto_accept_threshold": (
+                probability >= self.auto_accept_threshold
+            ),
+            "auto_accept_threshold": self.auto_accept_threshold,
+            "operating_threshold": self.operating_threshold,
+            "has_operating_point": self.has_operating_point,
+            # The brief's floor, kept separate so it is never mistaken for the
+            # operating point.
             "above_review_threshold": probability >= self.review_confidence,
-            "requires_human_review": probability < self.review_confidence,
+            "requires_human_review": probability < self.auto_accept_threshold,
             "review_confidence": self.review_confidence,
             "n_features_expected": len(self.features),
             "n_features_supplied": len(supplied),
@@ -177,6 +212,13 @@ class ModelRegistry:
                     "current P7 cell. Re-run colab_p7_train.py."
                 )
 
+        review_confidence = float(
+            payload.get("review_confidence", REVIEW_CONFIDENCE)
+        )
+        operating_threshold = payload.get("operating_threshold")
+        if operating_threshold is not None:
+            operating_threshold = float(operating_threshold)
+
         model = LoadedModel(
             name=name,
             booster=payload["booster"],
@@ -184,8 +226,19 @@ class ModelRegistry:
             target=payload["target"],
             label_column=payload.get("label_column", "unknown"),
             best_iteration=int(payload.get("best_iteration", 0)),
-            review_confidence=float(
-                payload.get("review_confidence", REVIEW_CONFIDENCE)
+            review_confidence=review_confidence,
+            operating_threshold=operating_threshold,
+            # Prefer the value P7 computed. Falling back to the bare 0.60 for a
+            # model whose scores live near 0.13 is what produced a "detects 2 of
+            # 100" detector, so the fallback is only used for artefacts written
+            # before calibration existed -- and it is reported when it happens.
+            auto_accept_threshold=float(
+                payload.get(
+                    "auto_accept_threshold",
+                    max(review_confidence, operating_threshold)
+                    if operating_threshold is not None
+                    else review_confidence,
+                )
             ),
             extra={
                 k: v
@@ -194,12 +247,23 @@ class ModelRegistry:
                 not in {
                     "booster", "features", "target", "label_column",
                     "best_iteration", "review_confidence",
+                    "operating_threshold", "auto_accept_threshold",
                 }
             },
         )
+        if operating_threshold is None:
+            logger.warning(
+                "model %s carries no calibrated operating_threshold; falling "
+                "back to the brief's %.2f review floor. Every event will need "
+                "human review. Re-run colab_p7_train.py to calibrate.",
+                name, review_confidence,
+            )
         logger.info(
-            "loaded model %s: %d features, target %s, %d trees",
+            "loaded model %s: %d features, target %s, %d trees, "
+            "auto-accept at %.6f (tau %s)",
             name, len(model.features), model.target, model.best_iteration,
+            model.auto_accept_threshold,
+            "none" if operating_threshold is None else f"{operating_threshold:.6f}",
         )
         with self._lock:
             self._models[name] = model
@@ -216,6 +280,9 @@ class ModelRegistry:
             "features": model.features,
             "best_iteration": model.best_iteration,
             "review_confidence": model.review_confidence,
+            "operating_threshold": model.operating_threshold,
+            "auto_accept_threshold": model.auto_accept_threshold,
+            "has_operating_point": model.has_operating_point,
             "trained_on": model.extra.get("split"),
             "n_train": model.extra.get("n_train"),
             "n_test": model.extra.get("n_test"),
@@ -243,6 +310,8 @@ MODEL_CAVEATS: Dict[str, List[str]] = {
         "facility-proximity fire in unseen regions.",
         "Importance is dominated by PEAK_HOUR_COS/SIN, i.e. satellite "
         "overpass timing rather than fire behaviour.",
+        "NO operating point could be frozen: no threshold reaches precision "
+        "0.90 at any recall worth having. Every event must go to human review.",
     ],
 }
 

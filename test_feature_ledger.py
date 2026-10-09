@@ -89,26 +89,61 @@ class TestAuditRecords(unittest.TestCase):
                 self.assertEqual(r["status"], fl.S_HIST_NAN, r["feature"])
                 self.assertEqual(r["phase"], fl.PHASE_P3D, r["feature"])
 
-    def test_four_absent_groups_fully_unimplemented(self):
-        # Two groups left this set as the project progressed:
+    def test_three_absent_groups_fully_unimplemented(self):
+        # Three groups left this set as the project progressed:
         #   P3a  INDUSTRIAL -> NEW_IMPLEMENTATION (industrial_features.py)
         #   P4a  QUALITY    -> NEW_IMPLEMENTATION (lineage_features.py)
-        # Neither is ever a recovered historical implementation.
+        #   P3e  SAR        -> PARTIAL: three of seven (colab_p7l_sar.py, P7k)
+        # None of them is ever a recovered historical implementation.
         absent = []
         for group in (
             fl.GROUP_LANDCOVER,
             fl.GROUP_SMOKE,
-            fl.GROUP_SAR,
             fl.GROUP_ATMOSPHERIC,
         ):
             absent.extend(fl.FEATURE_GROUPS[group])
 
-        self.assertEqual(len(absent), 39)
+        self.assertEqual(len(absent), 32)
         for r in self.records:
             if r["feature"] in absent:
                 self.assertEqual(
                     r["status"], fl.S_MISSING_IMPL, r["feature"]
                 )
+
+    def test_sar_is_partial_not_blanket_claimed(self):
+        """P3e implemented 4 of the 7 SAR features. The other 3 stay missing.
+
+        A blanket status would claim coherence and a structural-change
+        probability that no extraction produces, and a placeholder column is
+        indistinguishable from a measurement to the model and to SHAP.
+        """
+        implemented = {"VV_CHANGE", "VH_CHANGE", "VV_VH_CHANGE", "DNBR"}
+        not_implemented = {
+            "COHERENCE_LOSS",
+            "DNDVI",
+            "STRUCTURAL_CHANGE_PROBABILITY",
+        }
+        self.assertEqual(
+            set(fl.FEATURE_GROUPS[fl.GROUP_SAR]),
+            implemented | not_implemented,
+            "every SAR feature must be accounted for, not left unclassified",
+        )
+        for r in self.records:
+            if r["feature"] in implemented:
+                self.assertEqual(r["status"], fl.S_NEW_IMPL, r["feature"])
+                self.assertNotEqual(r["status"], fl.S_COMPUTED,
+                                    f"{r['feature']} is a new implementation, "
+                                    f"never a recovered historical one")
+            elif r["feature"] in not_implemented:
+                self.assertEqual(r["status"], fl.S_MISSING_IMPL, r["feature"])
+                self.assertEqual(r["phase"], fl.PHASE_P3E, r["feature"])
+
+    def test_coherence_is_never_claimed_from_grd(self):
+        """Coherence needs SLC phase, which GRD does not carry."""
+        self.assertEqual(
+            fl.STATUS_MAP["COHERENCE_LOSS"][0], fl.S_MISSING_IMPL
+        )
+        self.assertIn("interferometry", fl.STATUS_MAP["COHERENCE_LOSS"][3].lower())
 
     def test_lineage_fifty_four_are_new_implementation(self):
         """P4a implemented THERMAL + TEMPORAL + SPREAD + QUALITY from lineage.

@@ -1,0 +1,15 @@
+{
+  "figures": [
+    "01_confusion_grid.png",
+    "02_measure_bars.png",
+    "03_curves.png",
+    "04_ks_cdf.png",
+    "05_threshold_sweep.png",
+    "06_distance_integrity.png",
+    "07_class_balance.png",
+    "08_per_class.png",
+    "09_lineage_funnel.png",
+    "10_clusters_per_event.png"
+  ],
+  "skipped": []
+}

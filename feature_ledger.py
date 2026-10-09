@@ -812,13 +812,56 @@ _set(
     PHASE_P3C,
     "extract_landcover_features absent.",
 )
+# -- SAR: only THREE of the seven are obtainable from Sentinel-1 GRD, and they
+#    are implemented at P3e (colab_p7l_sar.py). The other four are split out
+#    rather than blanket-claimed, because a placeholder column is
+#    indistinguishable from a measurement to the model and to every SHAP report
+#    downstream. This block must come AFTER any earlier blanket GROUP_SAR
+#    assignment, for the ordering reason noted below.
 _set(
-    FEATURE_GROUPS[GROUP_SAR],
+    ["VV_CHANGE", "VH_CHANGE", "VV_VH_CHANGE"],
+    S_NEW_IMPL,
+    "p7l_sar",
+    PHASE_P3E,
+    "Monthly VV/VH median from COPERNICUS/S1_GRD, dB difference between the "
+    "event's own month and the month before it. Backscatter is already "
+    "calibrated, so the monthly median IS the observation -- no index. Three "
+    "features because those three are all GRD can honestly produce.",
+)
+_set(
+    ["COHERENCE_LOSS"],
     S_MISSING_IMPL,
     PHASE_NONE,
     PHASE_P3E,
-    "extract_sar_features absent. Sentinel-1 starts 2014-05; DNBR/DNDVI "
-    "need Sentinel-2 (2015-06).",
+    "Requires INTERFEROMETRY: two SLC acquisitions with known baseline. GRD "
+    "carries no phase, so coherence cannot be derived from it, and a GRD/VV "
+    "number and an SLC/VV number are not comparable in one feature column.",
+)
+_set(
+    ["STRUCTURAL_CHANGE_PROBABILITY"],
+    S_MISSING_IMPL,
+    PHASE_NONE,
+    PHASE_P3E,
+    "A MODEL OUTPUT, not an extraction: a fitted function of the other SAR "
+    "features. Emitting it here would put a second unversioned model in the "
+    "feature table.",
+)
+_set(
+    ["DNBR"],
+    S_NEW_IMPL,
+    "p7k_nbr",
+    PHASE_P3E,
+    "Landsat 8 NBR difference, produced by colab_p7k_nbr_change.py. OPTICAL, "
+    "not SAR: it belongs to the SAR group thematically, not by sensor.",
+)
+_set(
+    ["DNDVI"],
+    S_MISSING_IMPL,
+    PHASE_NONE,
+    PHASE_P3E,
+    "Needs the same Landsat/Sentinel-2 pair as DNBR but is not emitted by P7k, "
+    "which samples NBR only. Cheap to add there -- but it must be computed, "
+    "not carried as a placeholder.",
 )
 _set(
     FEATURE_GROUPS[GROUP_ATMOSPHERIC],

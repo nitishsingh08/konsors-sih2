@@ -29,6 +29,27 @@ DRIVER_CELLS = (
     "colab_p0_gap.py",
     "colab_p7_train.py",
     "colab_p6_dataset.py",
+    # P7b/P7c/P7d stream the catalogue and write artefacts, so they get the
+    # same static scrutiny. Registering P7c immediately caught a NameError that
+    # had already cost a full Colab run: a GeoJSON comprehension bound `row`
+    # while its sibling expression read `r`.
+    "colab_p7b_diagnose.py",
+    "colab_p7c_goldset.py",
+    "colab_p7d_probe.py",
+    "colab_p7e_gee_probe.py",
+    "colab_p7f_landcover_direct.py",
+    "colab_p7e0_reauth.py",
+    "colab_p7g_landcover_vs_label.py",
+    "colab_p7h_landcover_all.py",
+    "colab_p7i_surface_label.py",
+    # P7k/P7l are the NBR and SAR extractions: multi-hour EE runs that
+    # Colab WILL interrupt, so they get the same static scrutiny as P7h.
+    "colab_p7k_nbr_change.py",
+    "colab_p7l_sar.py",
+    # P7n weather/FWI, P7o atmospheric chemistry: same multi-hour EE
+    # sharded-extraction shape, same scrutiny.
+    "colab_p7n_weather.py",
+    "colab_p7o_atmos.py",
 )
 
 #: The bootstrap and diagnostics are exempt: they have no driver body.
@@ -198,6 +219,12 @@ class TestNoUndeclaredAccumulators(unittest.TestCase):
             tree = parse(name)
             for fn in function_scopes(tree):
                 bound = set()
+                # A parameter IS a binding: `_composite(cache, ...)` writing
+                # into `cache` is legitimate. Parameters are `ast.arg` nodes,
+                # not Store-context Names, so the walk below never sees them.
+                bound |= {a.arg for a in fn.args.args}
+                bound |= {a.arg for a in getattr(fn.args, "posonlyargs", [])}
+                bound |= {a.arg for a in getattr(fn.args, "kwonlyargs", [])}
                 for sub in ast.walk(fn):
                     if isinstance(sub, ast.Name) and isinstance(sub.ctx, ast.Store):
                         bound.add(sub.id)
@@ -553,3 +580,163 @@ class TestHardcodedDrivePaths(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class TestP7DistanceUnits(unittest.TestCase):
+    """`dist_m` in the evaluation CSV must be METRES, not log10.
+
+    `DIST_*_LOG` is `log10(1 + d_metres)`. An earlier version computed the
+    conversion into a local that nothing read and wrote the RAW LOG COLUMN to
+    the CSV under the name `dist_m`, so `heldout_pred_{A,B}.csv` held values
+    in 2.4..4.8 where `evaluate_model.py` expects metres -- off by four orders
+    of magnitude.
+
+    No metric ever looked wrong, because `10**x - 1` is monotone, so every
+    ranking-based number was unaffected. That is exactly why this needs a
+    static guard rather than a metric assertion.
+    """
+
+    CELL = "colab_p7_train.py"
+
+    def _source(self):
+        return (REPO / self.CELL).read_text()
+
+    def test_csv_does_not_write_the_raw_log_column_as_metres(self):
+        src = self._source()
+        for i, line in enumerate(src.split("\n"), start=1):
+            if '"dist_m": _dist' in line:
+                self.fail(
+                    f"{self.CELL}:{i}: the CSV writes the raw log10 column as "
+                    "'dist_m'. Write the converted metres value instead "
+                    "(dist_m_test)."
+                )
+
+    def test_csv_carries_the_metres_value(self):
+        src = self._source()
+        self.assertIn('"dist_m": dist_m_test', src)
+
+    def test_metres_conversion_is_computed_before_use(self):
+        src = self._source()
+        self.assertIn("dist_m_test = np.where(", src)
+        self.assertIn("np.power(10.0, _dist_test) - 1.0", src)
+
+    def test_a_unit_guard_precedes_the_write(self):
+        """The cell must fail loudly rather than emit a mislabelled unit."""
+        src = self._source()
+        self.assertIn("dist_m looks like log10 units, not metres", src)
+        self.assertIn("dist_m unit check", src)
+
+
+class TestP7OperatingThreshold(unittest.TestCase):
+    """P7 must CALIBRATE its operating point on the train fold.
+
+    The bug this pins: `REVIEW_CONFIDENCE = 0.60` was a bare literal applied
+    to models that are not calibrated to a 0.60 prior. Model B's held-out
+    scores sit near 0.13, so a flat 0.60 cut flagged 0.8% of positives -- the
+    "detects 2 out of 100" symptom. `HANDOFF` §8 mandates a frozen tau
+    (max F2 s.t. precision >= 0.90) which was never implemented.
+    """
+
+    CELL = "colab_p7_train.py"
+
+    def _source(self):
+        return (REPO / self.CELL).read_text()
+
+    def test_cell_imports_the_calibration_module(self):
+        self.assertIn("import threshold_calibration as tcal", self._source())
+
+    def test_train_scores_are_computed_for_calibration(self):
+        src = self._source()
+        self.assertIn("prob_train = model.predict(", src)
+
+    def test_calibration_is_asserted_to_be_on_train(self):
+        self.assertIn('tcal.assert_calibrated_on_train("train")', self._source())
+
+    def test_operating_threshold_is_persisted_in_the_pickle(self):
+        src = self._source()
+        self.assertIn('"operating_threshold": operating_points[key]["threshold"]',
+                      src)
+        self.assertIn('"auto_accept_threshold": tcal.effective_threshold(', src)
+
+    def test_deployed_bar_is_used_not_the_bare_literal(self):
+        """Per-class metrics and the review queue must use the effective bar."""
+        src = self._source()
+        self.assertIn("tcal.effective_threshold(", src)
+        # The bare literal must not be the sole decision anywhere left.
+        self.assertNotIn(
+            "confident >= db.REVIEW_CONFIDENCE", src,
+            "per-class metrics still gate on the bare 0.60 literal",
+        )
+        self.assertNotIn(
+            "db.to_review_queue(prob, db.REVIEW_CONFIDENCE)", src,
+            "the review queue still gates on the bare 0.60 literal",
+        )
+
+    def test_a_missing_operating_point_is_reported_not_replaced(self):
+        src = self._source()
+        self.assertIn("NO operating point", src)
+
+
+class TestP7SampleAlignment(unittest.TestCase):
+    """The sampled matrices are train-then-test CONCATENATED.
+
+    Indexing one of them with a global position (an index into the 7.27M-row
+    catalogue) reads past its end -- which produced
+    `IndexError: index 2154661 is out of bounds for axis 0 with size 2100000`
+    only after a full training run.
+
+    The guard below is static: a slice-per-side variable must be used for a
+    per-side lookup, and the concatenated form must not be.
+    """
+
+    CELL = "colab_p7_train.py"
+
+    def _source(self):
+        return (REPO / self.CELL).read_text()
+
+    def test_per_side_lookups_use_the_per_side_slice(self):
+        src = self._source()
+        # Anything indexed with a global index must come from the per-side
+        # array, never from the concatenation.
+        for name in ("_dist", "dist_m"):
+            for i, line in enumerate(src.split("\n"), start=1):
+                stripped = line.strip()
+                if not stripped.startswith(f"{name}["):
+                    continue
+                self.fail(
+                    f"{self.CELL}:{i}: '{name}[...]' indexes the "
+                    f"concatenated array. Use the per-side variable "
+                    f"(_dist_train / _dist_test) for a per-side lookup."
+                )
+
+    def test_per_side_arrays_are_defined(self):
+        src = self._source()
+        self.assertIn("_dist_train = X_train_a[:, _dist_col]", src)
+        self.assertIn("_dist_test = X_test_a[:, _dist_col]", src)
+
+    def test_evaluation_csv_lengths_match_the_sampled_arrays(self):
+        """The CSV is built from per-side arrays, so every column is the same
+        length as the sampled test set."""
+        tree = parse(self.CELL)
+        joins = [
+            n for n in ast.walk(tree)
+            if isinstance(n, ast.Call)
+            # `to_csv` is reached as an attribute (`frame.to_csv(...)`), so
+            # looking for a plain Name finds nothing.
+            and (
+                getattr(n.func, "attr", "") == "to_csv"
+                or getattr(n.func, "id", "") == "to_csv"
+            )
+        ]
+        self.assertTrue(joins, "expected the held-out CSV writer to exist")
+        src = self._source()
+        # `score` is assigned after the dict literal, so check both forms.
+        for column in ("y_true", "y_true_weak_label", "dist_m"):
+            self.assertIn(f'"{column}":', src)
+        self.assertIn('_out["score"] = _score', src)
+
+    def test_local_index_arrays_exist(self):
+        """train_idx/test_idx are mapped into the concatenated sample here, and
+        the per-side index arrays are what the matrices are built from."""
+        src = self._source()
+        self.assertIn("_train_local = np.searchsorted(_keep_rows, train_idx)", src)
+        self.assertIn("_test_local = np.searchsorted(_keep_rows, test_idx)", src)

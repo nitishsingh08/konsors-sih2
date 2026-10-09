@@ -1,0 +1,104 @@
+{
+  "A": {
+    "0.95": {
+      "tau": 0.0245,
+      "precision": 0.9941,
+      "recall": 1.0,
+      "flagged": 98940,
+      "flag_rate": 0.1649
+    },
+    "0.9": {
+      "tau": 0.0245,
+      "precision": 0.9941,
+      "recall": 1.0,
+      "flagged": 98940,
+      "flag_rate": 0.1649
+    },
+    "0.85": {
+      "tau": 0.0245,
+      "precision": 0.9941,
+      "recall": 1.0,
+      "flagged": 98940,
+      "flag_rate": 0.1649
+    },
+    "0.8": {
+      "tau": 0.0245,
+      "precision": 0.9941,
+      "recall": 1.0,
+      "flagged": 98940,
+      "flag_rate": 0.1649
+    },
+    "0.7": {
+      "tau": 0.0245,
+      "precision": 0.9941,
+      "recall": 1.0,
+      "flagged": 98940,
+      "flag_rate": 0.1649
+    },
+    "0.6": {
+      "tau": 0.0245,
+      "precision": 0.9941,
+      "recall": 1.0,
+      "flagged": 98940,
+      "flag_rate": 0.1649
+    },
+    "0.5": {
+      "tau": 0.0245,
+      "precision": 0.9941,
+      "recall": 1.0,
+      "flagged": 98940,
+      "flag_rate": 0.1649
+    }
+  },
+  "B": {
+    "0.95": {
+      "tau": 0.9061,
+      "precision": 0.9583,
+      "recall": 0.0002,
+      "flagged": 24,
+      "flag_rate": 0.0
+    },
+    "0.9": {
+      "tau": 0.8751,
+      "precision": 0.9024,
+      "recall": 0.0004,
+      "flagged": 41,
+      "flag_rate": 0.0001
+    },
+    "0.85": {
+      "tau": 0.8582,
+      "precision": 0.8571,
+      "recall": 0.0005,
+      "flagged": 56,
+      "flag_rate": 0.0001
+    },
+    "0.8": {
+      "tau": 0.698,
+      "precision": 0.8019,
+      "recall": 0.0034,
+      "flagged": 414,
+      "flag_rate": 0.0007
+    },
+    "0.7": {
+      "tau": 0.5698,
+      "precision": 0.7026,
+      "recall": 0.0103,
+      "flagged": 1446,
+      "flag_rate": 0.0024
+    },
+    "0.6": {
+      "tau": 0.4751,
+      "precision": 0.6007,
+      "recall": 0.0223,
+      "flagged": 3654,
+      "flag_rate": 0.0061
+    },
+    "0.5": {
+      "tau": 0.3698,
+      "precision": 0.5,
+      "recall": 0.0834,
+      "flagged": 16404,
+      "flag_rate": 0.0273
+    }
+  }
+}

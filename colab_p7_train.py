@@ -29,6 +29,8 @@ import dataset_builder as db
 import feature_ledger as fl
 import fire_labels as lab
 import training_design as td
+import surface_labels as surface_labels_mod
+import threshold_calibration as tcal
 import weak_labels as weak
 
 try:
@@ -122,44 +124,124 @@ db.assert_no_location_features(_X_COLS)
 print("location check: PASS")
 print(f"  X has {len(_X_COLS)} columns (from the footer, not a read)")
 
-# Which label column to train on.
+# Which label to train on.
 #
-#   "weak"    the industrial-context hierarchy in `weak_labels`. It labels a
-#             fifth of events instead of none, but it is MANUFACTURED from
-#             features the model also sees, so every metric on it is optimistic
-#             by construction. Model B excludes every rule input.
-#   "strict"  the evidence-gated engine. Almost entirely UNKNOWN, so it cannot
-#             train yet -- it needs the land-cover and weather groups.
-LABEL_COLUMN = "weak" if "label_weak" in y.columns else "strict"
+#   "surface"  the SUBSTRATE label from `surface_labels` (qc/surface_labels.*).
+#              THE DEFAULT, and the first target in this project a model cannot
+#              reproduce. Measured on the full catalogue (2026-10-05): 70.1% of
+#              weak INDUSTRIAL_FIRE sits on vegetated substrate, precision 0.299
+#              / recall 0.636 / F1 0.407 against a substrate proxy. The weak
+#              rules read only columns already in X, so model B was blind to
+#              the evidence behind its own target. `LANDCOVER_VEGETATED` comes
+#              from a raster absent from X, so label and model share no input.
+#   "weak"    the industrial-context hierarchy in `weak_labels`. Two distance
+#             terms after the calibration collapse, with `industrial_persistence`
+#             pinned to the floor of observed_days/30 so the shape conjunct
+#             excluded nothing. Retained for before/after comparison ONLY.
+#   "strict"  the evidence-gated engine. Almost entirely UNKNOWN.
+LABEL_SOURCE = str(globals().get("LABEL_SOURCE", "surface")).lower()
 
-labels = (y["label_weak"] if LABEL_COLUMN == "weak" else y["label"]).to_numpy()
+_surf_pq = QC_DIR / "surface_labels.parquet"
+_surf_csv = QC_DIR / "surface_labels.csv"
+_surf_path = (_surf_pq if cu.path_ok(_surf_pq)
+              else (_surf_csv if cu.path_ok(_surf_csv) else None))
+
+if LABEL_SOURCE == "surface":
+    if _surf_path is None:
+        raise SystemExit(
+            "qc/surface_labels.parquet not found. Run "
+            "colab_p7i_surface_label.py first and check its section 4 printed "
+            "SURFACE_FIRE and UNKNOWN: 0. Refusing to fall back to the weak "
+            "label -- that would silently train on the broken target again."
+        )
+    _surf = (pd.read_parquet(_surf_path) if _surf_path.suffix == ".parquet"
+             else pd.read_csv(_surf_path))
+    # POSITIONAL join, by `row`. `row` is the catalogue index P7h recorded, so
+    # this is exact -- no coordinate matching and no chance of pairing an event
+    # with its neighbour.
+    _surf = _surf.sort_values("row")
+    if len(_surf) != len(y):
+        raise SystemExit(
+            f"surface labels has {len(_surf):,} rows but y.parquet has "
+            f"{len(y):,}. The positional join would be WRONG."
+        )
+    labels = _surf["label_surf"].to_numpy()
+    _bin = _surf["is_surface_fire"].to_numpy(dtype="float64")
+    # UNKNOWN rows become 0 but are MASKED OUT of the sample entirely below, so
+    # a missing label can never train as a negative.
+    _surface_known = np.isfinite(_bin)
+    y_bin = np.where(_surface_known, _bin, 0.0).astype(int)
+    LABEL_COLUMN = "surface"
+    print(f"surface labels : {_surf_path}")
+    print(f"  classes       : {dict(pd.Series(labels).value_counts())}")
+    print(f"  unmapped/NA   : {int((~_surface_known).sum()):,}  -> excluded "
+          "from training entirely")
+    _tier_col = "is_surface_fire_tiered"
+    if _tier_col in _surf.columns:
+        print(f"  high tier (>=3 observed days): "
+              f"{int((_surf[_tier_col].to_numpy(dtype=float) == 1).sum()):,}")
+else:
+    LABEL_COLUMN = ("weak" if "label_weak" in y.columns else "strict")
+    labels = (y["label_weak"] if LABEL_COLUMN == "weak"
+              else y["label"]).to_numpy()
+    # y_bin is NOT built here: TARGET is resolved further down, once the label
+    # source is known. Building it in both branches meant the surface branch's
+    # version was overwritten anyway, and the weak branch read a name that did
+    # not exist yet.
+    _surface_known = np.ones(len(labels), dtype=bool)
+    print(f"WARNING: training on the WEAK label. Every metric below is")
+    print("         optimistic by construction, and the label was measured at")
+    print("         precision 0.299. Use this run only for comparison.")
+
 weights = (y["sample_weight"].to_numpy() if "sample_weight" in y.columns
            else np.ones(len(labels), dtype="float64"))
+
+# Mask out any row whose label could not be determined. For the weak labels
+# this is empty; for the surface label it is any UNKNOWN substrate.
+_usable = _surface_known.copy() if LABEL_SOURCE == "surface" \
+    else np.ones(len(labels), dtype=bool)
+if not _usable.all():
+    print(f"excluding {_usable.size - int(_usable.sum()):,} rows with no label")
 
 # `X` does not exist yet. It is filled AFTER the sample is chosen, straight
 # into preallocated float32 arrays, one row group at a time. NaN is preserved,
 # which is essential: NaN is how "could not measure" is encoded.
 
-# Which class to fit. INDUSTRIAL_FLARE has only 3,571 events in the whole
-# catalogue -- 894 in the training sample and 33 in the test set -- so its
-# metrics are dominated by sampling noise and both models early-stopped at
-# iteration 3. INDUSTRIAL_FIRE has 1,119,254 and is the first target that can
-# actually support a model. Change this to compare.
-TARGET = globals().get("TARGET", "INDUSTRIAL_FLARE")
+# Which class to fit. For the SURFACE label the positive is SURFACE_FIRE, whose
+# count is set below from the label itself rather than assumed.
+#
+# For the WEAK label, INDUSTRIAL_FLARE has only 3,571 events in the whole
+# catalogue -- 894 in a training sample, 33 in the test set -- so its metrics are
+# dominated by sampling noise and both models early-stopped at iteration 3. That
+# is why it is no longer the default target.
+TARGET = globals().get("TARGET", None)
+if TARGET is None:
+    TARGET = (surface_labels_mod.SURFACE_FIRE if LABEL_SOURCE == "surface"
+              else "INDUSTRIAL_FLARE")
+    print(f"  (target defaulted to {TARGET!r} for LABEL_SOURCE="
+          f"{LABEL_SOURCE!r})")
+
 print()
 print(f"label column : {LABEL_COLUMN}")
-if LABEL_COLUMN == "weak":
+if LABEL_SOURCE == "surface":
+    print("  SUBSTRATE label. Built from a raster ABSENT FROM X, so the model")
+    print("  cannot reproduce it. This is the first target here whose metrics")
+    print("  mean what they say.")
+    print("  It measures SUBSTRATE, not cause -- 'industrial' remains a claim")
+    print("  needing corroboration. See qc/surface_label_meta.json.")
+elif LABEL_COLUMN == "weak":
     print("  WEAK LABELS. These are manufactured from features the model sees,")
     print("  so PR-AUC here is an upper bound, NOT a generalisation estimate.")
+    print("  Measured at precision 0.299 against a substrate proxy (2026-10-05).")
     print("  Only an independent hand-labelled sample can give the latter.")
 else:
     print("  strict labels -- nearly all UNKNOWN, so training cannot proceed.")
 print()
 print(f"target class : {TARGET}")
 print("class counts (full catalogue):")
-for cls in weak.WEAK_CLASSES:
+for cls in sorted(set(labels)):
     n = int((labels == cls).sum())
-    print(f"  {cls:20s} {n:>10,}  {100.0 * n / max(len(labels), 1):>6.2f}%")
+    print(f"  {str(cls):20s} {n:>10,}  {100.0 * n / max(len(labels), 1):>6.2f}%")
 
 # ---------------------------------------------------------------------------
 # 2. SPLIT
@@ -172,10 +254,16 @@ print(f"  split kind: {split_kind}")
 train_ids = set(parts["train"]["event_id"])
 test_ids = set(parts["test"]["event_id"])
 
-is_train = meta["event_id"].isin(train_ids).to_numpy()
-is_test = meta["event_id"].isin(test_ids).to_numpy()
+# Rows whose label is UNKNOWN are EXCLUDED from the split entirely, not coerced
+# to 0. A missing label is not a negative: training on it would teach the model
+# that unmeasured substrate means "vegetation fire", which is exactly the
+# silent-wrong-answer failure this project has already produced twice.
+is_train = (meta["event_id"].isin(train_ids).to_numpy() & _usable)
+is_test = (meta["event_id"].isin(test_ids).to_numpy() & _usable)
 dropped = ~(is_train | is_test)
-
+_n_lost = int((~_usable).sum())
+if _n_lost:
+    print(f"  excluded for an undetermined label: {_n_lost:,}")
 print()
 print("=" * 74)
 print("SPLIT -- out-of-time AND out-of-space")
@@ -192,9 +280,16 @@ else:
     print("  temporal check: N/A -- the combined split trains on late events")
     print("    from non-held-out blocks by design; its guarantee is spatial.")
 
-y_bin = (labels == TARGET).astype(int)
+# The surface label already carries a 0/1 with NaN for UNKNOWN, so rebuilding it
+# from the class name would silently turn UNKNOWN rows into negatives.
+if LABEL_SOURCE != "surface":
+    y_bin = (labels == TARGET).astype(int)
+else:
+    y_bin = np.where(_surface_known,
+                     (_surf["label_surf"].to_numpy() == TARGET).astype(int), 0)
 print(f"  positives in train: {int(y_bin[is_train].sum()):,}")
 print(f"  positives in test : {int(y_bin[is_test].sum()):,}")
+print(f"  positive rate      : {100.0 * y_bin[is_train].mean():.2f}% train")
 if y_bin[is_train].sum() == 0 or y_bin[is_test].sum() == 0:
     raise SystemExit(
         "One side of the split has no positives. Widen the seed or lower the "
@@ -253,7 +348,12 @@ print(f"  a full float32 frame would be {_full_gb:.2f} GB; streaming avoids it")
 # in the "scientific" model -- and those are the INDUSTRIAL_FIRE rule's own
 # shape branch. That run reported 42 features and PR-AUC 0.527, both of which
 # were artefacts. Fail loudly instead.
-_model_a_cols, _model_b_cols, _leak = td.split_feature_sets(_X_COLS)
+# `include_surface` follows the label. Training against the surface label
+# WITHOUT excluding substrate from model B would put the label's own evidence
+# into the model -- the same circularity that made the weak label unreadable,
+# one column further in.
+_model_a_cols, _model_b_cols, _leak = td.split_feature_sets(
+    _X_COLS, include_surface=(LABEL_SOURCE == "surface"))
 _expected_b = len(_model_b_cols)
 _still_leaking = sorted(set(_model_b_cols) & set(weak.LABEL_INPUT_FEATURES))
 if _still_leaking:
@@ -353,7 +453,15 @@ def per_class_report(y_true, y_pred, classes):
 
 
 def fit_and_score(X_train, y_train, w_train, X_test, y_test, name):
-    """Train one LightGBM model and score it. Returns (model, y_prob)."""
+    """Train one LightGBM model and score it.
+
+    Returns (model, prob_test, prob_train, calibration).
+
+    TRAIN scores are returned because the operating threshold must be frozen on
+    the TRAIN fold and only on the TRAIN fold. Calibrating tau on the fold it
+    is then scored against is the quietest way to overstate a model, and it is
+    the same trap `tune_distance_baseline` already guards against below.
+    """
     params = {
         "objective": "binary",
         "metric": "average_precision",
@@ -384,12 +492,17 @@ def fit_and_score(X_train, y_train, w_train, X_test, y_test, name):
                    lgb.log_evaluation(100)],
     )
     prob = model.predict(X_test, num_iteration=model.best_iteration)
+    prob_train = model.predict(X_train, num_iteration=model.best_iteration)
     print(f"  {name}: best_iteration={model.best_iteration}")
-    return model, prob
+
+    tcal.assert_calibrated_on_train("train")
+    calibration = tcal.calibrate_operating_threshold(y_train, prob_train)
+    return model, prob, prob_train, calibration
 
 
 results = {}
 models = {}
+calibrations = {}
 
 # ---------------------------------------------------------------------------
 # 4. MODEL B -- the scientific claim (non-leak only)
@@ -400,11 +513,12 @@ print(f"model B (scientific): {len(non_leak)} non-leak features")
 print(f"  excluded as label-derived: {label_derived}")
 print("=" * 74)
 
-model_b, prob_b = fit_and_score(
+model_b, prob_b, prob_b_train, cal_b = fit_and_score(
     X_train_b, y_bin[train_idx], weights[train_idx],
     X_test_b, y_bin[test_idx], "model B",
 )
 models["B"] = model_b
+calibrations["B"] = cal_b
 results["B"] = td.binary_metrics(y_bin[test_idx], (prob_b >= 0.5).astype(int))
 results["B"]["recall_at_target"] = td.precision_recall_at_precision(
     y_bin[test_idx], prob_b, db.REVIEW_CONFIDENCE
@@ -420,11 +534,12 @@ print(f"model A (operational): all {len(_model_a_cols)} features")
 print(f"  includes the {len(label_derived)} label-derived industrial features")
 print("=" * 74)
 
-model_a, prob_a = fit_and_score(
+model_a, prob_a, prob_a_train, cal_a = fit_and_score(
     X_train_a, y_bin[train_idx], weights[train_idx],
     X_test_a, y_bin[test_idx], "model A",
 )
 models["A"] = model_a
+calibrations["A"] = cal_a
 results["A"] = td.binary_metrics(y_bin[test_idx], (prob_a >= 0.5).astype(int))
 results["A"]["recall_at_target"] = td.precision_recall_at_precision(
     y_bin[test_idx], prob_a, db.REVIEW_CONFIDENCE
@@ -442,12 +557,43 @@ print("=" * 74)
 # Distance is only needed for the baseline, and only for the sampled
 # rows, so it is read from the matrices already in memory.
 _dist_col = _X_COLS.index("DIST_NEAREST_FACILITY_LOG")
-_dist = np.concatenate([X_train_a[:, _dist_col], X_test_a[:, _dist_col]])
-dist_m = np.where(np.isfinite(_dist), np.power(10.0, _dist) - 1.0, np.nan)
+# Distance is only needed for the baseline and the evaluation CSV, and only
+# for the sampled rows, so it is read from the matrices already in memory.
+#
+# NOTE: this is ALREADY the train-then-test concatenation, so it must be
+# sliced before being indexed with global positions. Indexing the whole thing
+# with `test_idx` reaches past its end -- which is exactly what happened.
+_dist_train = X_train_a[:, _dist_col]
+_dist_test = X_test_a[:, _dist_col]
+# `DIST_*_LOG` is log10(1 + d_metres), so the metres conversion must be applied
+# where the value is CONSUMED. It was previously assigned to a local `dist_m`
+# that nothing ever read, while the raw log column was written to the CSV under
+# the name `dist_m` -- so the file held values in 2.4..4.8 where `evaluate_model`
+# and the baseline expect metres, i.e. off by four orders of magnitude. Ranking
+# was unaffected (the transform is monotone), which is why no metric ever
+# looked wrong. Fixed by computing once and using that name for both the
+# baseline and the CSV.
+dist_m_test = np.where(
+    np.isfinite(_dist_test), np.power(10.0, _dist_test) - 1.0, np.nan
+)
+# Guard the unit, because a mislabelled column here is invisible in every
+# ranking-based metric and only shows up as a nonsense metre threshold.
+_med = float(np.nanmedian(dist_m_test)) if np.isfinite(dist_m_test).any() else 0.0
+if not (_med > 1.0):
+    raise SystemExit(
+        f"dist_m looks like log10 units, not metres (median {_med:.4f}). "
+        "DIST_NEAREST_FACILITY_LOG is log10(1 + d_metres); the conversion was "
+        "dropped somewhere. Fix before writing the CSV -- evaluate_model.py and "
+        "the baseline both read this column as metres."
+    )
+print(f"  dist_m unit check: median {_med:,.0f} m (metres, PASS)")
+
 # Tuned on TRAIN only. Selecting the threshold on the test fold and then
 # reporting that fold's score is one of the quietest ways to overstate.
 baseline = td.tune_distance_baseline(
-    _dist[:len(train_idx)], y_bin[train_idx]
+    np.where(np.isfinite(_dist_train),
+             np.power(10.0, _dist_train) - 1.0, np.nan),
+    y_bin[train_idx]
 )
 print(f"  threshold : {baseline['threshold_m']:,.0f} m  "
       f"(tuned on train)")
@@ -472,8 +618,82 @@ for key in ("B", "A"):
     print(f"model {key}: PR-AUC {m['pr_auc']:.4f}   "
           f"F1 {m['f1']:.4f}   recall@prec>={db.REVIEW_CONFIDENCE} "
           f"{m['recall_at_target']['recall']:.4f}")
+    print(f"  NOTE: that recall is at the bare {db.REVIEW_CONFIDENCE} cut, which"
+          " is not a deployed operating point.")
+    print("        The calibrated bar is reported in the next section.")
     verdict = td.compare_to_baseline(m, baseline)
     print(f"  vs baseline: {verdict['verdict']}")
+
+print()
+print("=" * 74)
+print("OPERATING THRESHOLD -- frozen on TRAIN, applied to the held-out fold")
+print("=" * 74)
+print("Policy (HANDOFF §8): tau maximising F2 subject to precision >= 0.90.")
+print("This is a DIFFERENT constraint from the brief's flat 0.60 review rule,")
+print("and the two must not be conflated: an event is auto-accepted only when")
+print("it clears max(tau, 0.60). A flat 0.60 is meaningful only for a model")
+print("whose scores happen to be calibrated to that prior, and none of these")
+print("are -- model B's held-out scores sit near 0.13.")
+print()
+
+_probs = {"A": prob_a, "B": prob_b}
+_probs_train = {"A": prob_a_train, "B": prob_b_train}
+operating_points = {}
+
+for key in ("B", "A"):
+    cal = calibrations[key]
+    print(tcal.describe_calibration(cal, f"model {key}  (on train)"))
+    tau = cal.get("threshold")
+    operating_points[key] = {k: cal.get(k) for k in (
+        "threshold", "precision", "recall", "f_beta", "n_predicted",
+        "flag_fraction", "degenerate", "feasible", "reason",
+        "min_precision", "beta",
+    )}
+    if tau is None:
+        print("    -> NO operating point. Every event must go to human review.")
+        print("       Do NOT fall back to a flat 0.60 here: that cut flags a")
+        print("       fraction of a percent of positives while reporting a")
+        print("       confident precision, which is a false claim of coverage.")
+    else:
+        pred = _probs[key] >= tau
+        tp = int(np.sum(pred & (y_bin[test_idx] == 1)))
+        fp = int(np.sum(pred & (y_bin[test_idx] == 0)))
+        fn = int(np.sum(~pred & (y_bin[test_idx] == 1)))
+        held_p = tp / (tp + fp) if (tp + fp) else 0.0
+        held_r = tp / (tp + fn) if (tp + fn) else 0.0
+        held_f1 = (2 * held_p * held_r / (held_p + held_r)
+                   if (held_p + held_r) else 0.0)
+        operating_points[key]["held_out"] = {
+            "precision": held_p, "recall": held_r, "f1": held_f1,
+            "n_predicted": int(pred.sum()),
+        }
+        print(f"    -> on held-out: precision {held_p:.4f}  recall {held_r:.4f}"
+              f"  F1 {held_f1:.4f}   (tau never saw this fold)")
+
+print()
+print("What recall is actually available, and at what price:")
+print("Reported for both models because 'no operating point' is only actionable")
+print("if the reader can see the trade the model is really making.")
+print()
+for key in ("B", "A"):
+    for target in (0.50, 0.80, 0.95):
+        cal = tcal.threshold_for_recall(
+            y_bin[train_idx], _probs_train[key], min_recall=target
+        )
+        print(tcal.describe_calibration(cal, f"  model {key} recall>={target:.2f}"))
+        if cal.get("threshold") is not None:
+            pred = _probs[key] >= cal["threshold"]
+            tp = int(np.sum(pred & (y_bin[test_idx] == 1)))
+            fp = int(np.sum(pred & (y_bin[test_idx] == 0)))
+            fn = int(np.sum(~pred & (y_bin[test_idx] == 1)))
+            hp = tp / (tp + fp) if (tp + fp) else 0.0
+            hr = tp / (tp + fn) if (tp + fn) else 0.0
+            print(f"    -> on held-out: precision {hp:.4f}  recall {hr:.4f}")
+        if cal.get("degenerate"):
+            print("    -> DEGENERATE: that recall costs a flag on most of the")
+            print("       catalogue. Compare the precision against the base rate")
+            print(f"       ({100.0 * y_bin[test_idx].mean():.2f}%): if it is close,")
+            print("       the model is not ranking positives above negatives.")
 
 print()
 print("=" * 74)
@@ -487,7 +707,7 @@ _test_labels = labels[test_idx]
 _true_binary = np.where(_test_labels == TARGET, TARGET, NEGATIVE)
 
 print(f"PER-CLASS METRICS -- binary {TARGET} vs {NEGATIVE},")
-print(f"at the {db.REVIEW_CONFIDENCE} review threshold, on the held-out sample.")
+print(f"at each model's own DEPLOYED bar, on the held-out sample.")
 print(f"{NEGATIVE} is the pooled remainder: "
       + ", ".join(
           f"{c} {int((_test_labels == c).sum()):,}"
@@ -497,15 +717,21 @@ print("This model does NOT separate the other classes from each other; the")
 print("full 6-class problem needs a multilabel head or six models, later.")
 print("=" * 74)
 for key in ("B", "A"):
-    confident = prob_b if key == "B" else prob_a
-    pred_cls = np.where(
-        confident >= db.REVIEW_CONFIDENCE, TARGET, NEGATIVE
+    confident = _probs[key]
+    # The DEPLOYED bar, not the brief's bare 0.60. Auto-accept requires the
+    # calibrated operating point AND the brief's review floor; whichever is
+    # higher binds. Reporting per-class metrics at 0.60 for a model whose
+    # calibrated tau is 0.875 would describe an operating point nobody ships.
+    bar = tcal.effective_threshold(
+        operating_points[key]["threshold"], db.REVIEW_CONFIDENCE
     )
+    pred_cls = np.where(confident >= bar, TARGET, NEGATIVE)
     report = per_class_report(
         _true_binary, pred_cls, [TARGET, NEGATIVE],
     )
     print()
-    print(f"model {key}")
+    print(f"model {key}  (auto-accept bar {bar:.6f} = max(tau, "
+          f"{db.REVIEW_CONFIDENCE}))")
     print(report.to_string(index=False))
     # Confusion, so the table can be read without arithmetic.
     tp = int(((pred_cls == TARGET) & (_true_binary == TARGET)).sum())
@@ -518,13 +744,28 @@ for key in ("B", "A"):
 # 8. REVIEW QUEUE -- the brief's 60% escalation
 # ---------------------------------------------------------------------------
 
-for key, prob in (("B", prob_b), ("A", prob_a)):
-    queue = db.to_review_queue(prob, db.REVIEW_CONFIDENCE)
+print()
+print("=" * 74)
+print("REVIEW QUEUE -- at the deployed bar, not at a bare 0.60")
+print("=" * 74)
+for key in ("B", "A"):
+    prob = _probs[key]
+    bar = tcal.effective_threshold(
+        operating_points[key]["threshold"], db.REVIEW_CONFIDENCE
+    )
+    queue = db.to_review_queue(prob, bar)
     n_review = int(queue["review"].sum())
     print()
     print(f"model {key}: {int(queue['accept'].sum()):,} auto-accept, "
           f"{n_review:,} to human review "
           f"({100.0 * n_review / len(prob):.1f}%)")
+    if key == "B" and operating_points["B"]["threshold"] is None:
+        print("  No operating point was freezable for this model, so the queue")
+        print("  degenerates to 'review almost everything'. That is the honest")
+        print("  consequence of a detector that does not discriminate, and it")
+        print("  is the operational argument for LANDCOVER_FUEL: without the")
+        print("  features that separate industrial from wild fire there is")
+        print("  nothing to auto-accept on.")
 
 # ---------------------------------------------------------------------------
 # 9. FEATURE IMPORTANCE -- does it look like behaviour or geography?
@@ -548,6 +789,32 @@ print("=" * 74)
 print("CHECK -- is the model leaning on location after all?")
 print("=" * 74)
 importance.to_csv(QC_DIR / "p7_feature_importance_B.csv", index=False)
+
+# Persist the held-out predictions so the evaluation can be re-run without
+# retraining. Without this, scripts/evaluate_model.py has nothing to read: the
+# metrics are printed but never saved, so the honest evaluation is a one-off
+# terminal scroll rather than a reproducible artefact.
+#
+# y_true is the WEAK label, recorded explicitly so nobody mistakes it for
+# ground truth later.
+_base = pd.DataFrame({
+    "event_id": meta.iloc[test_idx]["event_id"].to_numpy(),
+    # y_true is the WEAK label. Named so it cannot later be mistaken for
+    # ground truth -- it is not.
+    "y_true": y_bin[test_idx],
+    "y_true_weak_label": labels[test_idx],
+    "dist_m": dist_m_test,
+    # The log10 form too, so a consumer never has to guess which convention a
+    # file uses. `dist_m` is metres; `dist_log10` is what X actually stores.
+    "dist_log10": _dist_test,
+})
+for _name, _score in (("heldout_pred_B", prob_b),
+                      ("heldout_pred_A", prob_a)):
+    _out = _base.copy()
+    _out["score"] = _score
+    _path = QC_DIR / f"{_name}.csv"
+    _out.to_csv(_path, index=False)
+    print(f"Wrote {_path}  {len(_out):,} rows")
 leaked = [c for c in non_leak if db.is_location_column(c)]
 print(f"  location columns in model B: {leaked or 'none'}")
 top = importance.head(10)["feature"].tolist()
@@ -578,6 +845,14 @@ payload = {
     "model_a": {"features": list(_model_a_cols), **results["A"]},
     "baseline": baseline,
     "review_confidence": db.REVIEW_CONFIDENCE,
+    "operating_points": operating_points,
+    "operating_threshold_policy": (
+        "tau maximising F2 subject to precision >= 0.90, frozen on the TRAIN "
+        "fold only. Distinct from review_confidence (0.60, the brief's human-"
+        "review floor). Auto-accept requires score >= max(tau, 0.60). A None "
+        "threshold means no operating point was freezable and every event must "
+        "go to human review."
+    ),
 }
 (QC_DIR / "p7_results.json").write_text(json.dumps(payload, indent=2, default=str))
 print()
@@ -613,6 +888,14 @@ for key, booster, cols in (
                 "best_iteration": booster.best_iteration,
                 "split": split_kind,
                 "review_confidence": db.REVIEW_CONFIDENCE,
+                # The calibrated operating point. Stored beside the booster so
+                # a reload cannot silently revert to the bare 0.60 literal, which
+                # is the literal that produced "detects 2 of 100".
+                "operating_threshold": operating_points[key]["threshold"],
+                "operating_point": operating_points[key],
+                "auto_accept_threshold": tcal.effective_threshold(
+                    operating_points[key]["threshold"], db.REVIEW_CONFIDENCE
+                ),
                 "n_train": int(len(train_idx)),
                 "n_test": int(len(test_idx)),
             },
@@ -621,6 +904,11 @@ for key, booster, cols in (
     print(f"Wrote {path}  ({path.stat().st_size / 1024:.0f} KB, "
           f"{booster.best_iteration} trees)")
 
+print()
+print()
+print("Held-out predictions written. To evaluate them honestly:")
+print("  python3 scripts/evaluate_model.py --scores qc/heldout_pred_B.csv")
+print("  (y_true there is the WEAK label, not ground truth)")
 print()
 print("Reloading requires the stored feature list, not the current X:")
 print("  payload = pickle.load(open(...));")

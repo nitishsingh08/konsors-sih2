@@ -111,16 +111,19 @@ class TestAuditRecords(unittest.TestCase):
                 )
 
     def test_sar_is_partial_not_blanket_claimed(self):
-        """P3e implemented 4 of the 7 SAR features. The other 3 stay missing.
+        """P3e implemented 3 of the 5 SAR features. The other 2 stay missing.
 
         A blanket status would claim coherence and a structural-change
         probability that no extraction produces, and a placeholder column is
         indistinguishable from a measurement to the model and to SHAP.
+
+        DNBR and DNDVI used to be counted here. They were produced by the SAR
+        cell, which is why they sat in this group, but neither is radar --
+        they moved to GROUP_OPTICAL_VEG, which now carries them.
         """
-        implemented = {"VV_CHANGE", "VH_CHANGE", "VV_VH_CHANGE", "DNBR"}
+        implemented = {"VV_CHANGE", "VH_CHANGE", "VV_VH_CHANGE"}
         not_implemented = {
             "COHERENCE_LOSS",
-            "DNDVI",
             "STRUCTURAL_CHANGE_PROBABILITY",
         }
         self.assertEqual(
@@ -137,6 +140,28 @@ class TestAuditRecords(unittest.TestCase):
             elif r["feature"] in not_implemented:
                 self.assertEqual(r["status"], fl.S_MISSING_IMPL, r["feature"])
                 self.assertEqual(r["phase"], fl.PHASE_P3E, r["feature"])
+
+    def test_optical_veg_is_not_radar(self):
+        """DNBR and DNDVI are optical indices; keeping them in SAR made a
+        five-feature radar family report SHAP mass from Landsat and
+        Sentinel-2, reading as one coherent sensor signal."""
+        self.assertEqual(
+            set(fl.FEATURE_GROUPS[fl.GROUP_OPTICAL_VEG]),
+            {"DNBR", "DNDVI"},
+        )
+        for optical in ("DNBR", "DNDVI"):
+            self.assertNotIn(optical, fl.FEATURE_GROUPS[fl.GROUP_SAR])
+            self.assertEqual(fl.GROUP_OF[optical], fl.GROUP_OPTICAL_VEG)
+        # Statuses differ and must NOT be flattened by the regrouping: P7k
+        # samples NBR only, so DNBR is implemented and DNDVI is not.
+        self.assertEqual(fl.STATUS_MAP["DNBR"][0], fl.S_NEW_IMPL)
+        self.assertEqual(fl.STATUS_MAP["DNDVI"][0], fl.S_MISSING_IMPL)
+        # Neither may inherit a blanket group status. OPTICAL_SMOKE and
+        # SAR_STRUCTURAL both carry one, which is exactly why neither was a
+        # safe home for them.
+        for blanket_group in (fl.GROUP_SMOKE, fl.GROUP_SAR):
+            for name in fl.FEATURE_GROUPS[blanket_group]:
+                self.assertNotIn(name, ("DNBR", "DNDVI"))
 
     def test_coherence_is_never_claimed_from_grd(self):
         """Coherence needs SLC phase, which GRD does not carry."""

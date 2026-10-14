@@ -50,6 +50,10 @@ DRIVER_CELLS = (
     # sharded-extraction shape, same scrutiny.
     "colab_p7n_weather.py",
     "colab_p7o_atmos.py",
+    # P7j fire-spread training, P7m SHAP analysis: ML cells that load
+    # artefacts and must not crash on reload.
+    "colab_p7j_fire_spread.py",
+    "colab_p7m_shap_analysis.py",
 )
 
 #: The bootstrap and diagnostics are exempt: they have no driver body.

@@ -198,10 +198,17 @@ if RESUME:
         # inside the shard's own band and unique; overlap would mean the
         # banding is wrong (the P7h bug, where shards 0 and 1 each carried
         # rows 0..250k).
-        if (_rows_n == 0
-                or int(_rows.min()) < _row_lo
+        #
+        # An EMPTY shard is a legitimate outcome (no event in that band had
+        # Landsat imagery -- pre-2013 or a month with no clear scenes) and
+        # must be TRUSTED as done. The earlier version DISCARDed empty
+        # shards too, which is what made the cell report "shards remaining"
+        # forever: every re-run re-extracted the same empty bands, never
+        # finishing.
+        if (_rows_n != 0 and (
+                int(_rows.min()) < _row_lo
                 or int(_rows.max()) >= _row_hi
-                or _rows_n != len(np.unique(_rows))):
+                or _rows_n != len(np.unique(_rows)))):
             print(f"  {_p.name}: {_rows_n:,} rows outside its band or not "
                   f"unique -- DISCARD")
             _p.unlink(missing_ok=True)
@@ -380,17 +387,25 @@ def _flush(shard_no, frames):
     `shard_no` is passed in, never tracked as mutable state -- the P7h bug,
     where seeding the shard number from `min(done_chunks)` made a resume
     overwrite correct files and mislabel new ones.
+
+    An empty shard is a LEGITIMATE outcome (no event in that band had
+    Landsat imagery -- pre-2013 or a month with no clear scenes). The
+    earlier version returned without writing it, so resume never trusted
+    it as done and the cell re-extracted the same empty bands forever,
+    reporting "shards remaining" on every re-run. Write the empty shard so
+    resume can trust it.
     """
-    if not frames:
-        return
     pth = shard_path(shard_no)
-    out = pd.concat(frames, ignore_index=True).sort_values("row")
-    # A shard's own chunks cannot overlap, so any duplicate here is a bug, and
-    # dropping it would hide that bug rather than surface it.
-    if len(out) != out["row"].nunique():
-        raise RuntimeError(f"shard {shard_no} assembled {len(out):,} rows for "
-                           f"{out['row'].nunique():,} distinct rows -- shard "
-                           f"boundaries are wrong")
+    if frames:
+        out = pd.concat(frames, ignore_index=True).sort_values("row")
+        # A shard's own chunks cannot overlap, so any duplicate here is a bug, and
+        # dropping it would hide that bug rather than surface it.
+        if len(out) != out["row"].nunique():
+            raise RuntimeError(f"shard {shard_no} assembled {len(out):,} rows for "
+                               f"{out['row'].nunique():,} distinct rows -- shard "
+                               f"boundaries are wrong")
+    else:
+        out = pd.DataFrame({"row": np.empty(0, dtype=np.int64)})
     pth.parent.mkdir(parents=True, exist_ok=True)
     partial = pth.with_suffix(".partial")
     out.to_parquet(partial, index=False)

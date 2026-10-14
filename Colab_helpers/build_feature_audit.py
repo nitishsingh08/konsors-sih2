@@ -32,6 +32,7 @@ from feature_ledger import (
     FEATURES_141,
     GROUP_OF,
     GROUP_SAR,
+    GROUP_OPTICAL_VEG,
     GROUP_ATMOSPHERIC,
     GROUP_SMOKE,
     LABEL_DERIVED_FEATURES,

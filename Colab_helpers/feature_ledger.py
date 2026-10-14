@@ -55,6 +55,7 @@ GROUP_INDUSTRIAL = "INDUSTRIAL"
 GROUP_WEATHER = "WEATHER_FIRE_DANGER"
 GROUP_SMOKE = "OPTICAL_SMOKE"
 GROUP_SAR = "SAR_STRUCTURAL"
+GROUP_OPTICAL_VEG = "OPTICAL_VEGETATION"
 GROUP_ATMOSPHERIC = "ATMOSPHERIC_CHEMISTRY"
 GROUP_QUALITY = "QUALITY_UNCERTAINTY"
 
@@ -193,6 +194,14 @@ FEATURE_GROUPS: "dict[str, list[str]]" = {
         "LIGHTNING_COUNT_24H",
     ],
     # 8. OPTICAL / SMOKE -- 7
+    #
+    # Entirely unimplemented, and `test_three_absent_groups_fully_unimplemented`
+    # depends on that: nothing here may carry a NEW_IMPLEMENTATION status.
+    # DNBR and DNDVI used to be filed under SAR / STRUCTURAL, which was a
+    # miscategorisation -- both are OPTICAL vegetation indices -- but they were
+    # moved to GROUP_OPTICAL_VEGETATION below rather than here, because this
+    # group is entirely absent from the implementation and two implemented
+    # features would falsify that.
     GROUP_SMOKE: [
         "SMOKE_PROBABILITY",
         "SMOKE_LENGTH_LOG",
@@ -202,15 +211,25 @@ FEATURE_GROUPS: "dict[str, list[str]]" = {
         "LIGHT_SMOKE_PROBABILITY",
         "BURN_SCAR_GROWTH_RATE",
     ],
-    # 9. SAR / STRUCTURAL -- 7
+    # 9. SAR / STRUCTURAL -- 5
     GROUP_SAR: [
         "VV_CHANGE",
         "VH_CHANGE",
         "VV_VH_CHANGE",
         "COHERENCE_LOSS",
+        "STRUCTURAL_CHANGE_PROBABILITY",
+    ],
+    # 9b. OPTICAL VEGETATION CHANGE -- 2
+    #
+    # Split out of SAR / STRUCTURAL. Both features were produced by the SAR
+    # extraction cell (P3e), which is why they sat in the radar group, but
+    # neither is radar: DNBR is a Landsat burn ratio and DNDVI is a Sentinel-2
+    # NDVI change. Leaving them in SAR meant a five-feature radar family
+    # reported a sixth of its SHAP mass from optical data, so "SAR_STRUCTURAL
+    # is a coherent signal" was really two sensors averaged together.
+    GROUP_OPTICAL_VEG: [
         "DNBR",
         "DNDVI",
-        "STRUCTURAL_CHANGE_PROBABILITY",
     ],
     # 10. ATMOSPHERIC CHEMISTRY -- 9
     GROUP_ATMOSPHERIC: [
@@ -271,7 +290,8 @@ EXPECTED_GROUP_SIZES: "dict[str, int]" = {
     GROUP_INDUSTRIAL: 18,
     GROUP_WEATHER: 18,
     GROUP_SMOKE: 7,
-    GROUP_SAR: 7,
+    GROUP_SAR: 5,
+    GROUP_OPTICAL_VEG: 2,
     GROUP_ATMOSPHERIC: 9,
     GROUP_QUALITY: 8,
 }
@@ -283,6 +303,78 @@ LABEL_DERIVED_FEATURES: "list[str]" = list(FEATURE_GROUPS[GROUP_INDUSTRIAL])
 NON_LEAK_FEATURES: "list[str]" = [
     f for f in FEATURES_141 if f not in set(LABEL_DERIVED_FEATURES)
 ]
+
+# ---------------------------------------------------------------------------
+# 1b. FEATURES PRODUCED BY THE PIPELINE BUT NOT IN THE 141 SPEC
+# ---------------------------------------------------------------------------
+#
+# The 141 is a CONTRACT: `colab_bootstrap.py` asserts the count is exactly 141
+# and `build_audit` asserts every name carries a STATUS_MAP entry. The P7 merge
+# work legitimately produced further columns -- the `_MONTHLY` weather copies
+# that `local_merge_p7b.py` created when it renamed P7n's monthly values aside
+# to make room for the daily chain, the `CELL_FIRE_*` recurrence columns that
+# renamed `RECURRENCE_RATE_*`, and a handful of site/landcover extras. Those
+# are real, measured, and in the training frame, so they must be attributable.
+#
+# They do NOT belong in FEATURE_GROUPS: adding them there would change
+# FEATURES_141 from 141 to 167 and fail the contract check. So they live here,
+# and `family_of` resolves them for SHAP attribution.
+#
+# WHY THIS MATTERS. `local_retrain.py` used to attribute any feature missing
+# from FEATURE_GROUPS to a bucket literally named "other", which reported 1.36
+# of Model B's total mean|SHAP| -- larger than any real family, and read as if
+# "other" were a finding. It was not: 26 of Model B's 76 features had no entry,
+# including 7 of the top 12. The bucket was a hole in the map, not a category.
+EXTRA_FEATURE_GROUPS: "dict[str, list[str]]" = {
+    # Monthly fire-weather. Same six codes as the daily chain, but from the
+    # P7n one-month-step approximation. Suffix `_MONTHLY` is created by the
+    # P7b merge; TEMP_K / RAIN_M / RH_PCT_MONTHLY are its originals.
+    GROUP_WEATHER: [
+        "FFMC_MONTHLY", "DMC_MONTHLY", "DC_MONTHLY", "ISI_MONTHLY",
+        "BUI_MONTHLY", "FWI_MONTHLY", "SWVL1_MONTHLY",
+        "TEMP_K", "RH_PCT_MONTHLY", "WIND_KMH_MONTHLY", "RAIN_M",
+    ],
+    # Site and cell history. CELL_FIRE_* are RECURRENCE_RATE_* under the names
+    # the P3g extraction actually produces (grid-cell detection counts, not
+    # site-level rates); the density columns are the area/period normalisations
+    # added at merge time.
+    GROUP_TEMPORAL: [
+        "CELL_FIRE_COUNT_1Y", "CELL_FIRE_COUNT_3Y", "CELL_FIRE_COUNT_5Y",
+        "CELL_FIRE_DENSITY_1Y", "CELL_FIRE_DENSITY_3Y", "CELL_FIRE_DENSITY_5Y",
+        "SITE_FRP_BASELINE", "SITE_N_EVENTS", "FRP_ANOMALY_VS_SITE",
+        "N_DETECTIONS", "N_DETECTIONS_GE3", "IS_SINGLE_DETECTION",
+    ],
+    GROUP_LANDCOVER: [
+        "LANDCOVER_VEGETATED",
+        "WORLDCOVER_CLASS",
+    ],
+    GROUP_QUALITY: [
+        # Set when FRP_PERSISTENCE is computed off a single detection, so the
+        # value is arithmetically real but semantically empty.
+        "PERSISTENCE_IS_VACUOUS",
+    ],
+}
+
+#: Every name the ledger can attribute, spec and extras together.
+FAMILY_OF: "dict[str, str]" = dict(GROUP_OF)
+for _group, _names in EXTRA_FEATURE_GROUPS.items():
+    for _name in _names:
+        _prev = FAMILY_OF.get(_name)
+        if _prev is not None and _prev != _group:
+            raise ValueError(
+                f"{_name} is claimed by both {_prev} and {_group}"
+            )
+        FAMILY_OF[_name] = _group
+
+#: Label for a feature the ledger genuinely does not know about. Distinct from
+#: the old bucket name on purpose -- "UNASSIGNED" says the map has a hole,
+#: "other" read as though it were a category with meaning.
+UNASSIGNED_FAMILY = "UNASSIGNED"
+
+
+def family_of(feature: str) -> str:
+    """Family for `feature`, or UNASSIGNED_FAMILY if the ledger lacks it."""
+    return FAMILY_OF.get(feature, UNASSIGNED_FAMILY)
 
 # ---------------------------------------------------------------------------
 # 3. STATUS VOCABULARY
@@ -369,7 +461,8 @@ DATASET_INDUSTRIAL = "Global Energy Monitor + OpenStreetMap Overpass"
 DATASET_WEATHER = "ERA5-Land (GEE) + CHIRPS + SoilGrids"
 DATASET_LIGHTNING = "ISS-LIS (NASA Earthdata)"
 DATASET_SMOKE = "Sentinel-5P OFFL_L3 AERONOMI + Sentinel-2 L2A"
-DATASET_SAR = "Sentinel-1 GRD (+ Sentinel-2 for DNBR/DNDVI)"
+DATASET_SAR = "Sentinel-1 GRD"
+DATASET_OPTICAL_VEG = "Landsat 5/7/8 NBR (P7k) + Sentinel-2 L2A"
 DATASET_ATMOSPHERIC = "Sentinel-5P OFFL_L3 (NO2/SO2/CO/CH4/HCHO/AERONOMI)"
 
 DATASET = {}
@@ -392,6 +485,8 @@ for _f in FEATURE_GROUPS[GROUP_SMOKE]:
     DATASET[_f] = DATASET_SMOKE
 for _f in FEATURE_GROUPS[GROUP_SAR]:
     DATASET[_f] = DATASET_SAR
+for _f in FEATURE_GROUPS[GROUP_OPTICAL_VEG]:
+    DATASET[_f] = DATASET_OPTICAL_VEG
 for _f in FEATURE_GROUPS[GROUP_ATMOSPHERIC]:
     DATASET[_f] = DATASET_ATMOSPHERIC
 for _f in FEATURE_GROUPS[GROUP_QUALITY]:
@@ -511,6 +606,18 @@ LOCAL_INPUT_HINTS: "dict[str, list[str]]" = {
         "sar",
         "vv_",
         "vh_",
+    ],
+    DATASET_OPTICAL_VEG: [
+        "landsat",
+        "l8",
+        "lc08",
+        "lt05",
+        "le07",
+        "nbr",
+        "sentinel2",
+        "sentinel_2",
+        "sentinel-2",
+        "ndvi",
     ],
     DATASET_ATMOSPHERIC: [
         "s5p",
@@ -927,6 +1034,10 @@ def _era_for(feature: str) -> "tuple[str, str]":
         return ERA["sentinel5p"]
     if group == GROUP_SAR:
         return ERA["sentinel1"]
+    if group == GROUP_OPTICAL_VEG:
+        # DNDVI is Sentinel-2; DNBR is Landsat, which has no ERA entry and so
+        # correctly falls back to the full span.
+        return ERA["sentinel2"] if feature == "DNDVI" else ERA_FULL
     if group == GROUP_ATMOSPHERIC:
         return ERA["sentinel5p"]
     return ERA_FULL

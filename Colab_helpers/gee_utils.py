@@ -974,7 +974,10 @@ def era5_monthly_weather(year: int, month: int,
 
     ECMWF/ERA5_LAND/DAILY_AGGR carries daily aggregates; a monthly MEAN is
     the feature. Bands kept: temperature_2m, dewpoint_temperature_2m,
-    u/v_component_of_wind_10m, total_precipitation,
+    u/v_component_of_wind_10m, total_precipitation_sum (NOTE the _sum:
+    ERA5-Land DAILY_AGGR names the daily aggregate total_precipitation_SUM,
+    not total_precipitation -- a wrong name empties the whole composite
+    silently),
     volumetric_soil_water_layer_1. RH / VPD / wind speed / FWI are derived
     LOCALLY in the cell, never on the server.
     """
@@ -983,33 +986,60 @@ def era5_monthly_weather(year: int, month: int,
     start, end = _month_bounds(year, month)
     bands = ["temperature_2m", "dewpoint_temperature_2m",
              "u_component_of_wind_10m", "v_component_of_wind_10m",
-             "total_precipitation", "volumetric_soil_water_layer_1"]
+             "total_precipitation_sum", "volumetric_soil_water_layer_1"]
     return (ee.ImageCollection(collection_id)
             .filterDate(start, end).select(bands).mean())
 
 
 def s5p_monthly_median(year: int, month: int, collection_id: str,
-                       band: str):
-    """Sentinel-5P monthly MEDIAN of one TROPOMI trace-gas band."""
+                        band: str):
+    """Sentinel-5P monthly MEDIAN of one TROPOMI trace-gas band.
+
+    Returns `None` when the collection is empty for that month, NOT a 0-band
+    image. Sampling a 0-band image raises "Band pattern 'X' was applied to an
+    Image with no bands", and because `sample_points_chunked` catches the
+    exception per-chunk the points are silently dropped -- which is how P7o
+    run 1 lost 100% of its points across the whole run while the first 45
+    chunks reported success. Returning `None` lets callers short-circuit
+    without an extra `bandNames().getInfo()` round trip per call.
+
+    The size check is one round trip per (month, band), not per chunk: the
+    result is cached by the caller's composite cache, so a month shared by
+    1,000 chunks costs one `getInfo`, not 1,000.
+    """
     import ee
 
     start, end = _month_bounds(year, month)
-    return (ee.ImageCollection(collection_id)
-            .filterDate(start, end).select([band]).median())
+    col = (ee.ImageCollection(collection_id)
+           .filterDate(start, end).select([band]))
+    if col.size().getInfo() == 0:
+        return None
+    return col.median()
 
 
 def s5p_monthly_climatology(month: int, collection_id: str, band: str,
                             first_year: int = 2019,
                             last_year: int = 2023) -> tuple:
     """`(mean_image, std_image)` of one S5P band for a calendar month over a
-    fixed window, to z-score the event month."""
+    fixed window, to z-score the event month.
+
+    Returns `(None, None)` when the window has no data at all, so callers
+    using `probe` short-circuit the same way they do for an empty event
+    month. Months with no data in the window contribute NOTHING -- they are
+    filtered out rather than included as 0-band images, which would
+    propagate into the mean and std and produce a 0-band result.
+    """
     import ee
 
-    imgs = [ee.ImageCollection(collection_id)
-            .filterDate(*_month_bounds(y, month)).select([band]).median()
-            for y in range(int(first_year), int(last_year) + 1)]
+    imgs = []
+    for y in range(int(first_year), int(last_year) + 1):
+        img = s5p_monthly_median(y, month, collection_id, band)
+        if img is not None:
+            imgs.append(img)
+    if not imgs:
+        return None, None
     stack = ee.ImageCollection(imgs)
-    return stack.mean(), stack.reduce(ee.Reducer.stdDev())
+    return stack.mean(), stack.reduce(ee.Reducer.stdDev()).rename([band])
 
 
 def era5_monthly_climatology(month: int,
@@ -1027,7 +1057,9 @@ def era5_monthly_climatology(month: int,
             .filterDate(*_month_bounds(y, month)).select(bands).mean()
             for y in range(int(first_year), int(last_year) + 1)]
     stack = ee.ImageCollection(imgs)
-    return stack.mean(), stack.reduce(ee.Reducer.stdDev())
+    # stdDev reducer appends '_stdDev' to band names; rename back so both mean
+    # and std images share identical band names.
+    return stack.mean(), stack.reduce(ee.Reducer.stdDev()).rename(bands)
 
 
 def sample_bands_chunked(images: dict, records, id_key: str = "row",

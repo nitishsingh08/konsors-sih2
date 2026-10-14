@@ -282,6 +282,7 @@ def predict_fire_trajectory(event_row, spread_model, hours=24, dt_minutes=60):
 
 import colab_utils as cu
 import surface_labels as sl
+import training_design as td
 
 P7J_CELL_VERSION = "2026-10-05.1"
 
@@ -316,59 +317,119 @@ print("=" * 74)
 print("1. LOAD DATA")
 print("=" * 74)
 
-# Load surface labels (already created by P7i)
-_lc_path = cu.PROJECT_ROOT / "qc" / "surface_labels.parquet"
+# Surface labels carry the `row` column that joins positionally to X/y.
+# `PROJECT_ROOT` is the cell's own resolved root; `cu.PROJECT_ROOT` does not
+# exist (it was a typo that made the cell crash on line 320).
+_lc_path = PROJECT_ROOT / "qc" / "surface_labels.parquet"
 if not cu.path_ok(_lc_path):
-    raise SystemExit("surface_labels.parquet not found. Run colab_p7i_surface_label.py first.")
+    raise SystemExit(
+        "surface_labels.parquet not found. Run colab_p7i_surface_label.py "
+        "first."
+    )
 
-lc = pd.read_parquet("qc/surface_labels.parquet") if cu.path_ok("qc/surface_labels.parquet") else pd.read_csv("qc/surface_labels.csv")
+lc = (pd.read_parquet(_lc_path) if _lc_path.suffix == ".parquet"
+      else pd.read_csv(PROJECT_ROOT / "qc" / "surface_labels.csv"))
+N = len(lc)
+print(f"  surface labels : {N:,} rows")
 
-# Load thermal features
+# Thermal features to stream from X, straight from the parquet footer so a
+# missing column is detected before a single row is read.
 _XC = set(pq.ParquetFile(DATASET_DIR / "X.parquet").schema_arrow.names)
-_thermal = [c for c in [
-    "FRP_MEDIAN", "FRP_P90", "FRP_MAX", "FRP_SUM_LOG", "FRP_CV",
-    "FRP_PERSISTENCE", "DETECTION_COUNT_LOG", "DETECTION_COUNT_LOG",
-    "OVERPASS_DETECTION_RATIO", "DURATION_HOURS_LOG",
-    "FRP_AUTOCORRELATION", "STATIONARITY_INDEX",
-    "FRP_PEAK_MEDIAN_RATIO", "FRP_SLOPE", "FRP_DECAY_RATE",
-    "FRP_PEAK_MEDIAN_RATIO", "FRP_SLOPE", "FRP_DECAY_RATE",
-    "FRP_ANOMALY_Z",
-    "PEAK_HOUR_SIN", "PEAK_HOUR_COS", "NIGHT_DAY_FRP_RATIO",
-    "FRP_PERSISTENCE", "TIME_TO_PEAK", "FRP_PEAK_MEDIAN_RATIO",
-    "FRP_SLOPE", "FRP_DECAY_RATE", "FRP_ANOMALY_Z",
-] if c in _XC]
-
-# Thermal columns to stream
 _thermal_cols = [c for c in [
     "FRP_MEDIAN", "FRP_P90", "FRP_MAX", "FRP_SUM_LOG", "FRP_CV",
-    "FRP_PERSISTENCE", "DETECTION_COUNT_LOG", "DETECTION_COUNT_LOG",
+    "FRP_PERSISTENCE", "DETECTION_COUNT_LOG",
     "OVERPASS_DETECTION_RATIO", "DURATION_HOURS_LOG",
     "FRP_AUTOCORRELATION", "STATIONARITY_INDEX",
     "FRP_PEAK_MEDIAN_RATIO", "FRP_SLOPE", "FRP_DECAY_RATE",
     "FRP_ANOMALY_Z",
     "PEAK_HOUR_SIN", "PEAK_HOUR_COS", "NIGHT_DAY_FRP_RATIO",
-    "FRP_PERSISTENCE", "TIME_TO_PEAK", "FRP_PEAK_MEDIAN_RATIO",
-    "FRP_SLOPE", "FRP_DECAY_RATE", "FRP_ANOMALY_Z",
+    "TIME_TO_PEAK",
 ] if c in _XC]
 
-print(f"Streaming {len(_thermal_cols)} thermal columns...")
+# Spread targets are physical quantities computed by P6 from the detection
+# timeline; they live in X as columns, so stream them alongside features.
+_target_cols = [c for c in SPREAD_TARGETS if c in _XC]
+print(f"  streaming {len(_thermal_cols)} thermal + "
+      f"{len(_target_cols)} spread-target columns ...")
 t0 = time.time()
-_therm = {c: np.full(N, np.nan, dtype=np.float64) for c in _thermal_cols}
+_cols = _thermal_cols + _target_cols
+_therm = {c: np.full(N, np.nan, dtype=np.float64) for c in _cols}
 _offset = 0
 for _b in pq.ParquetFile(DATASET_DIR / "X.parquet").iter_batches(
-    batch_size=500_000, columns=_thermal_cols
+    batch_size=500_000, columns=_cols
 ):
     _blk = _b.to_pandas()
     _n = _blk.shape[0]
-    for _c in _thermal_cols:
-        _therm[_c][_offset:_offset + _n] = _blk[_c].to_numpy(dtype="float64", na_value=np.nan)
+    for _c in _cols:
+        _therm[_c][_offset:_offset + _n] = _blk[_c].to_numpy(
+            dtype="float64", na_value=np.nan)
     _offset += _n
     if _offset % 2_000_000 < _n:
         print(f"    {_offset:,} / {N:,}")
 print(f"  done, {_offset:,} rows in {time.time() - t0:.0f}s")
+if _offset != N:
+    raise SystemExit(
+        f"X.parquet yielded {_offset:,} rows but surface labels have {N:,}. "
+        f"The positional join would be WRONG."
+    )
 
-print("P7j fire spread prediction cell ready.")
-print("To run in Colab:")
-print("  1. Upload all .py files via bootstrap")
-print("  2. Run: import colab_runcell; colab_runcell.run('colab_p7j_fire_spread')")
-print("  This trains spread models and saves predictions.")
+# ---------------------------------------------------------------------------
+# 2. SPLIT
+# ---------------------------------------------------------------------------
+print()
+print("=" * 74)
+print("2. SPLIT -- out-of-time AND out-of-space")
+print("=" * 74)
+_meta = pd.read_parquet(
+    DATASET_DIR / "meta.parquet",
+    columns=[c for c in ("event_id", "start_time") if c in
+             set(pq.ParquetFile(DATASET_DIR / "meta.parquet")
+                 .schema_arrow.names)],
+)
+_meta = td.add_split_keys(_meta)
+_parts = td.make_split(_meta, kind=td.SPLIT_COMBINED, seed=0)
+_train_ids = set(_parts["train"]["event_id"])
+_test_ids = set(_parts["test"]["event_id"])
+# Positional: row i in lc corresponds to row i in X.
+_is_train = lc["event_id"].isin(_train_ids).to_numpy()
+_is_test = lc["event_id"].isin(_test_ids).to_numpy()
+print(f"  train : {int(_is_train.sum()):>10,}")
+print(f"  test  : {int(_is_test.sum()):>10,}")
+
+# ---------------------------------------------------------------------------
+# 3. TRAIN ONE REGRESSOR PER SPREAD TARGET
+# ---------------------------------------------------------------------------
+print()
+print("=" * 74)
+print("3. TRAIN SPREAD MODELS")
+print("=" * 74)
+_Xf = pd.DataFrame(_therm)
+_yf = _Xf[_target_cols]
+_Xf = _Xf[_thermal_cols]
+
+_models = train_spread_models(
+    _Xf.loc[_is_train], _yf.loc[_is_train],
+    _Xf.loc[_is_test], _yf.loc[_is_test],
+)
+
+# ---------------------------------------------------------------------------
+# 4. PERSIST PREDICTIONS
+# ---------------------------------------------------------------------------
+print()
+print("=" * 74)
+print("4. SAVE PREDICTIONS")
+print("=" * 74)
+QC_DIR.mkdir(parents=True, exist_ok=True)
+for _name, _pred in _models.items():
+    _out = pd.DataFrame({
+        "event_id": lc.loc[_is_test, "event_id"].to_numpy(),
+        "row": np.where(_is_test)[0],
+        f"y_true_{_name}": _yf.loc[_is_test, _name].to_numpy(),
+        f"pred_{_name}": _pred.predict(_Xf.loc[_is_test, _thermal_cols]),
+    })
+    _p = QC_DIR / f"p7j_pred_{_name}.csv"
+    _out.to_csv(_p, index=False)
+    print(f"  wrote {_p}  {len(_out):,} rows")
+
+print()
+print("P7j complete -- spread predictions saved to qc/p7j_pred_*.csv")

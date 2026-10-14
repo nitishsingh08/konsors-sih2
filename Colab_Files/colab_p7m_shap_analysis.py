@@ -55,37 +55,56 @@ with open(MODEL_A_PATH, "rb") as f:
 with open(MODEL_B_PATH, "rb") as f:
     payload_B = pickle.load(f)
 
-# Extract boosters from payload dicts
-model_A = payload_A["booster"] if isinstance(payload_A, dict) and "booster" in payload_A else payload_A
-model_B = payload_B["booster"] if isinstance(payload_B, dict) and "booster" in payload_B else payload_B
+# `colab_p7_train.py` persists a DICT, not a bare booster:
+#     {"booster": ..., "features": [...], "target": ..., ...}
+# Treating the dict as a booster raises `AttributeError: 'dict' object has
+# no attribute 'feature_name'`. Unpack it here.
+if not isinstance(payload_A, dict) or "booster" not in payload_A:
+    raise ValueError(
+        f"Model A at {MODEL_A_PATH} is not the dict payload written by "
+        f"colab_p7_train.py (got {type(payload_A).__name__}). Re-run P7 "
+        f"training and re-pickle.")
+if not isinstance(payload_B, dict) or "booster" not in payload_B:
+    raise ValueError(
+        f"Model B at {MODEL_B_PATH} is not the dict payload written by "
+        f"colab_p7_train.py (got {type(payload_B).__name__}). Re-run P7 "
+        f"training and re-pickle.")
 
-# Feature names from payload or model
-features_A = payload_A.get("features", model_A.feature_name() if hasattr(model_A, 'feature_name') else None)
-features_B = payload_B.get("features", model_B.feature_name() if hasattr(model_B, 'feature_name') else None)
+model_A = payload_A["booster"]
+model_B = payload_B["booster"]
+features_A = list(payload_A["features"])
+features_B = list(payload_B["features"])
 
-# Ensure we have valid models with feature_name method
-if not hasattr(model_A, 'feature_name'):
-    raise ValueError(f"Model A is not a valid LightGBM booster: {type(model_A)}")
-if not hasattr(model_B, 'feature_name'):
-    raise ValueError(f"Model B is not a valid LightGBM booster: {type(model_B)}")
+# A booster maps COLUMN POSITIONS, so the stored feature list is the only
+# safe way to align a frame with it. `model.feature_name()` returns the
+# names in the booster's own order, which matches the stored list when
+# P7 wrote them from the same source -- but the stored list is the
+# contract, so use it.
+if features_A != model_A.feature_name():
+    print(f"  WARNING: stored feature list for model A differs from the "
+          f"booster's own order. Using the stored list.")
+if features_B != model_B.feature_name():
+    print(f"  WARNING: stored feature list for model B differs from the "
+          f"booster's own order. Using the stored list.")
 
-features_A = features_A or model_A.feature_name()
-features_B = features_B or model_B.feature_name()
-
-print(f"Model A: {len(features_A)} features, {model_A.best_iteration} trees")
-print(f"Model B: {len(features_B)} features, {model_B.best_iteration} trees")
+print(f"Model A: {len(features_A)} features, "
+      f"{getattr(model_A, 'best_iteration', '?')} trees")
+print(f"Model B: {len(features_B)} features, "
+      f"{getattr(model_B, 'best_iteration', '?')} trees")
 
 # Load predictions to get test indices
 pred_A = pd.read_csv(PRED_A_PATH)
 pred_B = pd.read_csv(PRED_B_PATH)
 
-# Load test data (same as training)
+# Load test data (same as training). Paths go through the resolver, not a
+# literal -- a literal broke twice when the tree moved to a duplicated
+# folder, and once when a stale mount hid it.
 import pyarrow.parquet as pq
 import pyarrow as pa
 
-DATASET_DIR = Path("/content/drive/MyDrive/Firm_Clusters/full_2012_2026/features/dataset")
-META_PATH = Path("/content/drive/MyDrive/Firm_Clusters/full_2012_2026/features/dataset/meta.parquet")
-X_PATH = Path("/content/drive/MyDrive/Firm_Clusters/full_2012_2026/features/dataset/X.parquet")
+DATASET_DIR = PROJECT_ROOT / "full_2012_2026" / "features" / "dataset"
+META_PATH = DATASET_DIR / "meta.parquet"
+X_PATH = DATASET_DIR / "X.parquet"
 
 # Load test indices (same as training)
 meta = pd.read_parquet(META_PATH)
@@ -94,7 +113,6 @@ meta = td.add_split_keys(meta)
 parts = td.make_split(meta, kind="year_x_block", seed=0)
 test_ids = set(parts["test"]["event_id"])
 
-# Load test data matching heldout predictions
 # Load test event_ids from predictions
 test_event_ids_A = set(pred_A["event_id"].tolist())
 test_event_ids_B = set(pred_B["event_id"].tolist())
@@ -119,15 +137,24 @@ print("=" * 74)
 print("2. SHAP ANALYSIS")
 print("=" * 74)
 
-# Model A SHAP
+# `TreeExplainer.shap_values`, NOT `model.predict(..., pred_contrib=True)`.
+# LightGBM's booster has no `pred_contrib` argument; that call raises
+# TypeError and was the second blocker in this cell.
 print("Computing SHAP for Model A...")
 explainer_A = shap.TreeExplainer(model_A)
-shap_values_A = model_A.predict(X_test, pred_contrib=True)
+shap_values_A = explainer_A.shap_values(X_test[features_A])
 
 # Model B SHAP
 print("Computing SHAP for Model B...")
 explainer_B = shap.TreeExplainer(model_B)
-shap_values_B = model_B.predict(X_test, pred_contrib=True)
+shap_values_B = explainer_B.shap_values(X_test[features_B])
+
+# `shap_values` may be a list (one array per class) for multiclass models.
+# These are binary classifiers, so take the single array if wrapped.
+if isinstance(shap_values_A, list):
+    shap_values_A = shap_values_A[0]
+if isinstance(shap_values_B, list):
+    shap_values_B = shap_values_B[0]
 
 # Save SHAP values
 np.save("qc/shap_values_A.npy", shap_values_A)

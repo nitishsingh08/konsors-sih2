@@ -178,7 +178,25 @@ class Explanation:
 
 def shap_explain(booster, features: List[str], row: Dict[str, Any],
                  model_name: str = "B") -> Explanation:
-    """Exact additive SHAP attributions for one event."""
+    """Exact additive SHAP attributions for one event.
+
+    MISSING VALUES. TreeExplainer handles NaN natively for tree models
+    (shap >= 0.41 routes a missing value down the tree's own missing
+    branch, which is exactly what `booster.predict` does), so a row
+    with unmeasured features is explainable: the attribution for an
+    unmeasured feature is its missing-branch contribution, not zero
+    and not an error. The previous version raised MissingFeatureError
+    on any NaN, which made per-event explanation impossible on this
+    catalogue -- 26 of Model B's features are unmeasured on most rows
+    (SPREAD family 3.3% covered, THERMAL 67%, ATMOSPHERIC 59%), so
+    no complete row exists to explain.
+
+    NaN is still not zero: the matrix is pre-filled with NaN and only
+    measured features are overwritten, so an unmeasured feature keeps
+    its missing-branch path rather than being asserted as measured-at-
+    zero. `missing_features` is reported on the Explanation so the
+    reader can see which attributions came from the missing branch.
+    """
     import shap
 
     matrix = np.full((1, len(features)), np.nan, dtype="float32")
@@ -191,15 +209,6 @@ def shap_explain(booster, features: List[str], row: Dict[str, Any],
             continue
         matrix[0, i] = float(value)
         supplied += 1
-
-    # TreeExplainer needs no NaN, and substituting 0 would claim an
-    # unmeasured feature was measured at zero. So a SHAP run needs the row's
-    # measured features; missing ones are reported rather than invented.
-    if missing:
-        raise MissingFeatureError(
-            f"SHAP needs a value for every feature the model uses; "
-            f"{len(missing)} are unmeasured: {missing[:6]}"
-        )
 
     explainer = shap.TreeExplainer(booster)
     values = explainer.shap_values(matrix)
@@ -232,7 +241,7 @@ def shap_explain(booster, features: List[str], row: Dict[str, Any],
         top_features=top_contributions(features, attributions),
         n_features_expected=len(features),
         n_features_supplied=supplied,
-        missing_features=[],
+        missing_features=missing,
         caveats=list(CAVEATS.get(model_name, [])),
     )
 

@@ -126,7 +126,7 @@ The `setup.sh` / `setup.ps1` scripts attempt to download the dataset automatical
 
 ### Manual Download
 
-1. **Download** `Features_mapped.7z` from the [Google Drive dataset link](https://drive.google.com/drive/folders/PLACEHOLDER).
+1. **Download** `Features_mapped.7z` from the [Google Drive dataset link](https://drive.google.com/drive/folders/1OFclk-M-7VIJJjl1ibMvZ6cIYVnv1O4n?usp=sharing).
 2. **Extract** the archive into the repository root using 7-Zip:
 
    **macOS / Linux:**
